@@ -4,6 +4,7 @@ import boto3
 import sqlite3
 import pandas as pd
 import streamlit as st
+import json
 
 DB_FILE = "npi.db"
 
@@ -319,16 +320,33 @@ def count_providers_by_state(limit=20):
 # -----------------------------
 # Convert DataFrame to JSON-safe result
 # -----------------------------
-def df_to_json_records(result_df, max_rows=20):
+def df_to_json_records(result_df, max_rows=10):
+    """
+    Convert pandas DataFrame to Bedrock-safe JSON.
+    Removes NaN values and converts unsupported values to strings.
+    """
+
     if result_df is None or result_df.empty:
         return {
             "rows": [],
             "message": "No matching records found."
         }
 
+    clean_df = result_df.head(max_rows).copy()
+
+    # Replace NaN/NaT/pandas missing values with None
+    clean_df = clean_df.where(pd.notnull(clean_df), None)
+
+    records = clean_df.to_dict(orient="records")
+
+    # Force JSON-safe conversion
+    safe_records = json.loads(
+        json.dumps(records, default=str)
+    )
+
     return {
-        "rows": result_df.head(max_rows).to_dict(orient="records"),
-        "row_count_returned": min(len(result_df), max_rows)
+        "rows": safe_records,
+        "row_count_returned": len(safe_records)
     }
 
 
