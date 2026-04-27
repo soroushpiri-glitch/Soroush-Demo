@@ -2,20 +2,77 @@ import os
 import boto3
 import sqlite3
 import pandas as pd
+import streamlit as st
 
-DB_FILE = "npi.db"
-
-AWS_REGION = os.getenv("AWS_REGION", "us-east-2")
-BEDROCK_MODEL_ID = os.getenv(
-    "BEDROCK_MODEL_ID",
-    "us.amazon.nova-lite-v1:0"
-)
+DB_FILE="npi.db"
 
 
-bedrock = boto3.client(
-    "bedrock-runtime",
-    region_name="us-east-2"
-)
+def setup_database():
+
+    # only build once
+    if os.path.exists(DB_FILE):
+        return
+
+    s3 = boto3.client(
+        "s3",
+        region_name=st.secrets["AWS_REGION"],
+        aws_access_key_id=st.secrets["AWS_ACCESS_KEY_ID"],
+        aws_secret_access_key=st.secrets["AWS_SECRET_ACCESS_KEY"]
+    )
+
+    # download from S3
+    s3.download_file(
+        st.secrets["S3_BUCKET"],
+        st.secrets["S3_NPI_KEY"],
+        "npi_data.csv"
+    )
+
+    s3.download_file(
+        st.secrets["S3_BUCKET"],
+        st.secrets["S3_TAXONOMY_KEY"],
+        "taxonomy.csv"
+    )
+
+    conn = sqlite3.connect(DB_FILE)
+
+    # build provider table
+    df = pd.read_csv(
+        "npi_data.csv",
+        low_memory=False
+    )
+
+    df.to_sql(
+        "npi_providers",
+        conn,
+        if_exists="replace",
+        index=False
+    )
+
+    # build taxonomy lookup
+    tax = pd.read_csv(
+        "taxonomy.csv",
+        dtype=str
+    ).fillna("")
+
+    tax["search_text"] = (
+        tax["Code"] + " " +
+        tax["Grouping"] + " " +
+        tax["Classification"] + " " +
+        tax["Specialization"] + " " +
+        tax["Display Name"]
+    ).str.lower()
+
+    tax.to_sql(
+        "taxonomy_lookup",
+        conn,
+        if_exists="replace",
+        index=False
+    )
+
+    conn.close()
+
+
+setup_database()
 # -----------------------------
 # SQL helper
 # -----------------------------
