@@ -563,6 +563,11 @@ User question:
                 tool_name,
                 tool_input
             )
+            if tool_result.get("rows"):
+                return f"Found {len(tool_result['rows'])} matching records:\n\n{tool_result['rows']}"
+            else:
+                return tool_result.get("message", "No matching records found.")
+            
 
             tool_result_message = {
                 "role": "user",
