@@ -73,6 +73,16 @@ def setup_database():
 
 
 setup_database()
+
+AWS_REGION = st.secrets.get("AWS_REGION", "us-east-2")
+BEDROCK_MODEL_ID = st.secrets.get("BEDROCK_MODEL_ID", "us.amazon.nova-lite-v1:0")
+
+bedrock = boto3.client(
+    "bedrock-runtime",
+    region_name=AWS_REGION,
+    aws_access_key_id=st.secrets["AWS_ACCESS_KEY_ID"],
+    aws_secret_access_key=st.secrets["AWS_SECRET_ACCESS_KEY"]
+)
 # -----------------------------
 # SQL helper
 # -----------------------------
