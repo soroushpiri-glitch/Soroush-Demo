@@ -1,12 +1,10 @@
 import streamlit as st
+from npi_chatbot_sql import bedrock_agent
 
-st.title("NPI Bedrock Chatbot")
+st.title("NPI Agent")
 
-question = st.text_input(
-    "Ask a question about NPI data"
-)
+question = st.text_input("Ask about providers")
 
-if question:
-    st.write(
-        "Hook Bedrock agent here"
-    )
+if st.button("Submit"):
+    answer = bedrock_agent(question)
+    st.write(answer)
