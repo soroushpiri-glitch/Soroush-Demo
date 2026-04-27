@@ -475,14 +475,14 @@ def execute_tool(tool_name, tool_input):
         result = find_provider_by_npi(
             tool_input["npi"]
         )
-        return df_to_json_records(result)
+        return df_to_json_records(result, max_rows=5)
 
     if tool_name == "search_taxonomy_codes":
         result = search_taxonomy_codes(
             keyword=tool_input.get("keyword"),
             limit=tool_input.get("limit", 100)
         )
-        return df_to_json_records(result)
+       return df_to_json_records(result, max_rows=5)
 
     if tool_name == "search_providers":
         result = search_providers(
@@ -492,13 +492,13 @@ def execute_tool(tool_name, tool_input):
             specialty=tool_input.get("specialty"),
             limit=tool_input.get("limit", 20)
         )
-        return df_to_json_records(result)
+        return df_to_json_records(result, max_rows=5)
 
     if tool_name == "count_providers_by_state":
         result = count_providers_by_state(
             limit=tool_input.get("limit", 20)
         )
-        return df_to_json_records(result)
+        return df_to_json_records(result, max_rows=5)
 
     return {
         "error": f"Unknown tool: {tool_name}"
@@ -582,10 +582,10 @@ User question:
 
             messages.append(tool_result_message)
 
+            
             final_response = bedrock.converse(
                 modelId=BEDROCK_MODEL_ID,
                 messages=messages,
-                toolConfig=tool_config,
                 inferenceConfig={
                     "maxTokens": 800,
                     "temperature": 0.1
