@@ -1,546 +1,411 @@
-{
- "cells": [
-  {
-   "cell_type": "code",
-   "execution_count": 6,
-   "id": "220eb5cc-8fff-425c-a399-1b3cc4133b80",
-   "metadata": {},
-   "outputs": [],
-   "source": [
-    "import os\n",
-    "import boto3\n",
-    "\n",
-    "AWS_REGION = os.getenv(\"AWS_REGION\", \"us-east-2\")\n",
-    "BEDROCK_MODEL_ID = os.getenv(\n",
-    "    \"BEDROCK_MODEL_ID\",\n",
-    "    \"us.amazon.nova-lite-v1:0\"\n",
-    ")\n",
-    "\n",
-    "bedrock = boto3.client(\n",
-    "    \"bedrock-runtime\",\n",
-    "    region_name=AWS_REGION\n",
-    ")"
-   ]
-  },
-  {
-   "cell_type": "code",
-   "execution_count": 7,
-   "id": "70ec695f-97bf-4fd4-9572-e5446c058252",
-   "metadata": {},
-   "outputs": [],
-   "source": [
-    "import boto3\n",
-    "\n",
-    "bedrock = boto3.client(\n",
-    "    \"bedrock-runtime\",\n",
-    "    region_name=\"us-east-2\"\n",
-    ")"
-   ]
-  },
-  {
-   "cell_type": "code",
-   "execution_count": 8,
-   "id": "238614ca-4137-470e-ad91-d0e2f417da28",
-   "metadata": {},
-   "outputs": [
-    {
-     "name": "stdout",
-     "output_type": "stream",
-     "text": [
-      "<botocore.credentials.Credentials object at 0x15cbb6250>\n"
-     ]
+import os
+import boto3
+
+AWS_REGION = os.getenv("AWS_REGION", "us-east-2")
+BEDROCK_MODEL_ID = os.getenv(
+    "BEDROCK_MODEL_ID",
+    "us.amazon.nova-lite-v1:0"
+)
+
+
+bedrock = boto3.client(
+    "bedrock-runtime",
+    region_name="us-east-2"
+)
+# -----------------------------
+# SQL helper
+# -----------------------------
+def run_query(sql, params=None):
+    conn = sqlite3.connect(DB_FILE)
+    result = pd.read_sql_query(sql, conn, params=params or [])
+    conn.close()
+    return result
+
+
+# -----------------------------
+# SQL tools
+# -----------------------------
+def find_provider_by_npi(npi):
+    sql = """
+    SELECT 
+        NPI,
+        "Entity Type Code",
+        "Provider Organization Name (Legal Business Name)",
+        "Provider First Name",
+        "Provider Last Name (Legal Name)",
+        "Provider Business Practice Location Address City Name",
+        "Provider Business Practice Location Address State Name",
+        "Healthcare Provider Taxonomy Code_1",
+        "Certification Date"
+    FROM npi_providers
+    WHERE CAST(NPI AS TEXT) = ?
+    LIMIT 1
+    """
+    return run_query(sql, [str(npi)])
+
+
+def search_taxonomy_codes(keyword, limit=100):
+    """
+    Search the NUCC taxonomy lookup table by keyword.
+    Example: oncology, cardiology, nurse practitioner, clinic, dentist.
+    """
+
+    sql = """
+    SELECT
+        Code,
+        Grouping,
+        Classification,
+        Specialization,
+        "Display Name"
+    FROM taxonomy_lookup
+    WHERE search_text LIKE ?
+    LIMIT ?
+    """
+
+    return run_query(sql, [f"%{keyword.lower()}%", limit])
+
+
+def search_providers(
+    last_name=None,
+    state=None,
+    city=None,
+    specialty=None,
+    limit=20
+):
+    """
+    Search providers using optional filters:
+    - last name
+    - state
+    - city
+    - specialty/taxonomy
+    """
+
+    sql = """
+    SELECT
+        NPI,
+        "Provider First Name",
+        "Provider Last Name (Legal Name)",
+        "Provider Organization Name (Legal Business Name)",
+        "Provider Business Practice Location Address City Name" AS City,
+        "Provider Business Practice Location Address State Name" AS State,
+        "Healthcare Provider Taxonomy Code_1" AS Taxonomy_1,
+        "Healthcare Provider Taxonomy Code_2" AS Taxonomy_2,
+        "Healthcare Provider Taxonomy Code_3" AS Taxonomy_3
+    FROM npi_providers
+    WHERE 1=1
+    """
+
+    params = []
+
+    if last_name:
+        sql += ' AND "Provider Last Name (Legal Name)" LIKE ?'
+        params.append(f"%{last_name}%")
+
+    if state:
+        sql += ' AND "Provider Business Practice Location Address State Name" = ?'
+        params.append(state.upper())
+
+    if city:
+        sql += ' AND "Provider Business Practice Location Address City Name" LIKE ?'
+        params.append(f"%{city}%")
+
+    # Advanced specialty search using taxonomy_lookup
+    if specialty:
+        taxonomy_matches = search_taxonomy_codes(specialty, limit=200)
+
+        if not taxonomy_matches.empty:
+            codes = (
+                taxonomy_matches["Code"]
+                .dropna()
+                .unique()
+                .tolist()
+            )
+
+            taxonomy_conditions = []
+
+            for i in range(1, 16):
+                col = f"Healthcare Provider Taxonomy Code_{i}"
+                placeholders = ",".join(["?"] * len(codes))
+                taxonomy_conditions.append(f'"{col}" IN ({placeholders})')
+
+            sql += " AND (" + " OR ".join(taxonomy_conditions) + ")"
+
+            for _ in range(15):
+                params.extend(codes)
+
+        else:
+            sql += ' AND "Healthcare Provider Taxonomy Group_1" LIKE ?'
+            params.append(f"%{specialty}%")
+
+    sql += " LIMIT ?"
+    params.append(limit)
+
+    return run_query(sql, params)
+
+
+def count_providers_by_state(limit=20):
+    sql = """
+    SELECT 
+        "Provider Business Practice Location Address State Name" AS State,
+        COUNT(*) AS Provider_Count
+    FROM npi_providers
+    GROUP BY "Provider Business Practice Location Address State Name"
+    ORDER BY Provider_Count DESC
+    LIMIT ?
+    """
+    return run_query(sql, [limit])
+
+
+# -----------------------------
+# Convert DataFrame to JSON-safe result
+# -----------------------------
+def df_to_json_records(result_df, max_rows=20):
+    if result_df is None or result_df.empty:
+        return {
+            "rows": [],
+            "message": "No matching records found."
+        }
+
+    return {
+        "rows": result_df.head(max_rows).to_dict(orient="records"),
+        "row_count_returned": min(len(result_df), max_rows)
     }
-   ],
-   "source": [
-    "import boto3\n",
-    "session = boto3.Session()\n",
-    "print(session.get_credentials())"
-   ]
-  },
-  {
-   "cell_type": "code",
-   "execution_count": 14,
-   "id": "c538e783-dc25-4e5b-a325-e509a03290d3",
-   "metadata": {},
-   "outputs": [
-    {
-     "name": "stdin",
-     "output_type": "stream",
-     "text": [
-      "\n",
-      "Ask about NPI data, or type 'quit':  find DERMATOLOGISTS IN MARYLAND\n"
-     ]
-    },
-    {
-     "name": "stdout",
-     "output_type": "stream",
-     "text": [
-      "\n",
-      "[Bedrock selected tool: search_providers]\n",
-      "[Tool input: {'specialty': 'dermatology', 'state': 'MD'}]\n",
-      "\n",
-      "Answer:\n",
-      "<thinking>The 'search_providers' tool has returned a list of dermatologists in Maryland. I will present the results to the user.</thinking>\n",
-      "\n",
-      "Here are the dermatologists in Maryland:\n",
-      "\n",
-      "1. **Robert Berger**\n",
-      "   - NPI: 1659374460\n",
-      "   - City: White Plains\n",
-      "   - Taxonomy: 207N00000X\n",
-      "\n",
-      "2. **Robert Carnathan**\n",
-      "   - NPI: 1679575849\n",
-      "   - City: Chevy Chase\n",
-      "   - Taxonomy: 207N00000X\n",
-      "\n",
-      "3. **Purnima Sau**\n",
-      "   - NPI: 1912905266\n",
-      "   - City: Silver Spring\n",
-      "   - Taxonomy: 207ND0900X\n",
-      "\n",
-      "4. **Norman Lockshin**\n",
-      "   - NPI: 1366440117\n",
-      "   - City: Silver Spring\n",
-      "   - Taxonomy: 207N00000X\n",
-      "\n",
-      "5. **Johns Hopkins University**\n",
-      "   - NPI: 1659377323\n",
-      "   - City: Baltimore\n",
-      "   - Taxonomy: 207NP0225X, 207ND0101X, 291U00000X\n",
-      "\n",
-      "Each entry includes the provider's last name, NPI number, city, and taxonomy code(s).\n"
-     ]
-    },
-    {
-     "name": "stdin",
-     "output_type": "stream",
-     "text": [
-      "\n",
-      "Ask about NPI data, or type 'quit':  quit\n"
-     ]
-    }
-   ],
-   "source": [
-    "# -----------------------------\n",
-    "# SQL helper\n",
-    "# -----------------------------\n",
-    "def run_query(sql, params=None):\n",
-    "    conn = sqlite3.connect(DB_FILE)\n",
-    "    result = pd.read_sql_query(sql, conn, params=params or [])\n",
-    "    conn.close()\n",
-    "    return result\n",
-    "\n",
-    "\n",
-    "# -----------------------------\n",
-    "# SQL tools\n",
-    "# -----------------------------\n",
-    "def find_provider_by_npi(npi):\n",
-    "    sql = \"\"\"\n",
-    "    SELECT \n",
-    "        NPI,\n",
-    "        \"Entity Type Code\",\n",
-    "        \"Provider Organization Name (Legal Business Name)\",\n",
-    "        \"Provider First Name\",\n",
-    "        \"Provider Last Name (Legal Name)\",\n",
-    "        \"Provider Business Practice Location Address City Name\",\n",
-    "        \"Provider Business Practice Location Address State Name\",\n",
-    "        \"Healthcare Provider Taxonomy Code_1\",\n",
-    "        \"Certification Date\"\n",
-    "    FROM npi_providers\n",
-    "    WHERE CAST(NPI AS TEXT) = ?\n",
-    "    LIMIT 1\n",
-    "    \"\"\"\n",
-    "    return run_query(sql, [str(npi)])\n",
-    "\n",
-    "\n",
-    "def search_taxonomy_codes(keyword, limit=100):\n",
-    "    \"\"\"\n",
-    "    Search the NUCC taxonomy lookup table by keyword.\n",
-    "    Example: oncology, cardiology, nurse practitioner, clinic, dentist.\n",
-    "    \"\"\"\n",
-    "\n",
-    "    sql = \"\"\"\n",
-    "    SELECT\n",
-    "        Code,\n",
-    "        Grouping,\n",
-    "        Classification,\n",
-    "        Specialization,\n",
-    "        \"Display Name\"\n",
-    "    FROM taxonomy_lookup\n",
-    "    WHERE search_text LIKE ?\n",
-    "    LIMIT ?\n",
-    "    \"\"\"\n",
-    "\n",
-    "    return run_query(sql, [f\"%{keyword.lower()}%\", limit])\n",
-    "\n",
-    "\n",
-    "def search_providers(\n",
-    "    last_name=None,\n",
-    "    state=None,\n",
-    "    city=None,\n",
-    "    specialty=None,\n",
-    "    limit=20\n",
-    "):\n",
-    "    \"\"\"\n",
-    "    Search providers using optional filters:\n",
-    "    - last name\n",
-    "    - state\n",
-    "    - city\n",
-    "    - specialty/taxonomy\n",
-    "    \"\"\"\n",
-    "\n",
-    "    sql = \"\"\"\n",
-    "    SELECT\n",
-    "        NPI,\n",
-    "        \"Provider First Name\",\n",
-    "        \"Provider Last Name (Legal Name)\",\n",
-    "        \"Provider Organization Name (Legal Business Name)\",\n",
-    "        \"Provider Business Practice Location Address City Name\" AS City,\n",
-    "        \"Provider Business Practice Location Address State Name\" AS State,\n",
-    "        \"Healthcare Provider Taxonomy Code_1\" AS Taxonomy_1,\n",
-    "        \"Healthcare Provider Taxonomy Code_2\" AS Taxonomy_2,\n",
-    "        \"Healthcare Provider Taxonomy Code_3\" AS Taxonomy_3\n",
-    "    FROM npi_providers\n",
-    "    WHERE 1=1\n",
-    "    \"\"\"\n",
-    "\n",
-    "    params = []\n",
-    "\n",
-    "    if last_name:\n",
-    "        sql += ' AND \"Provider Last Name (Legal Name)\" LIKE ?'\n",
-    "        params.append(f\"%{last_name}%\")\n",
-    "\n",
-    "    if state:\n",
-    "        sql += ' AND \"Provider Business Practice Location Address State Name\" = ?'\n",
-    "        params.append(state.upper())\n",
-    "\n",
-    "    if city:\n",
-    "        sql += ' AND \"Provider Business Practice Location Address City Name\" LIKE ?'\n",
-    "        params.append(f\"%{city}%\")\n",
-    "\n",
-    "    # Advanced specialty search using taxonomy_lookup\n",
-    "    if specialty:\n",
-    "        taxonomy_matches = search_taxonomy_codes(specialty, limit=200)\n",
-    "\n",
-    "        if not taxonomy_matches.empty:\n",
-    "            codes = (\n",
-    "                taxonomy_matches[\"Code\"]\n",
-    "                .dropna()\n",
-    "                .unique()\n",
-    "                .tolist()\n",
-    "            )\n",
-    "\n",
-    "            taxonomy_conditions = []\n",
-    "\n",
-    "            for i in range(1, 16):\n",
-    "                col = f\"Healthcare Provider Taxonomy Code_{i}\"\n",
-    "                placeholders = \",\".join([\"?\"] * len(codes))\n",
-    "                taxonomy_conditions.append(f'\"{col}\" IN ({placeholders})')\n",
-    "\n",
-    "            sql += \" AND (\" + \" OR \".join(taxonomy_conditions) + \")\"\n",
-    "\n",
-    "            for _ in range(15):\n",
-    "                params.extend(codes)\n",
-    "\n",
-    "        else:\n",
-    "            sql += ' AND \"Healthcare Provider Taxonomy Group_1\" LIKE ?'\n",
-    "            params.append(f\"%{specialty}%\")\n",
-    "\n",
-    "    sql += \" LIMIT ?\"\n",
-    "    params.append(limit)\n",
-    "\n",
-    "    return run_query(sql, params)\n",
-    "\n",
-    "\n",
-    "def count_providers_by_state(limit=20):\n",
-    "    sql = \"\"\"\n",
-    "    SELECT \n",
-    "        \"Provider Business Practice Location Address State Name\" AS State,\n",
-    "        COUNT(*) AS Provider_Count\n",
-    "    FROM npi_providers\n",
-    "    GROUP BY \"Provider Business Practice Location Address State Name\"\n",
-    "    ORDER BY Provider_Count DESC\n",
-    "    LIMIT ?\n",
-    "    \"\"\"\n",
-    "    return run_query(sql, [limit])\n",
-    "\n",
-    "\n",
-    "# -----------------------------\n",
-    "# Convert DataFrame to JSON-safe result\n",
-    "# -----------------------------\n",
-    "def df_to_json_records(result_df, max_rows=20):\n",
-    "    if result_df is None or result_df.empty:\n",
-    "        return {\n",
-    "            \"rows\": [],\n",
-    "            \"message\": \"No matching records found.\"\n",
-    "        }\n",
-    "\n",
-    "    return {\n",
-    "        \"rows\": result_df.head(max_rows).to_dict(orient=\"records\"),\n",
-    "        \"row_count_returned\": min(len(result_df), max_rows)\n",
-    "    }\n",
-    "\n",
-    "\n",
-    "# -----------------------------\n",
-    "# Bedrock tool definitions\n",
-    "# -----------------------------\n",
-    "tool_config = {\n",
-    "    \"tools\": [\n",
-    "        {\n",
-    "            \"toolSpec\": {\n",
-    "                \"name\": \"find_provider_by_npi\",\n",
-    "                \"description\": \"Find one healthcare provider using a 10-digit NPI number.\",\n",
-    "                \"inputSchema\": {\n",
-    "                    \"json\": {\n",
-    "                        \"type\": \"object\",\n",
-    "                        \"properties\": {\n",
-    "                            \"npi\": {\n",
-    "                                \"type\": \"string\",\n",
-    "                                \"description\": \"10-digit NPI number\"\n",
-    "                            }\n",
-    "                        },\n",
-    "                        \"required\": [\"npi\"]\n",
-    "                    }\n",
-    "                }\n",
-    "            }\n",
-    "        },\n",
-    "        {\n",
-    "            \"toolSpec\": {\n",
-    "                \"name\": \"search_taxonomy_codes\",\n",
-    "                \"description\": \"Search the full NUCC healthcare taxonomy table by specialty, provider type, classification, specialization, or display name.\",\n",
-    "                \"inputSchema\": {\n",
-    "                    \"json\": {\n",
-    "                        \"type\": \"object\",\n",
-    "                        \"properties\": {\n",
-    "                            \"keyword\": {\n",
-    "                                \"type\": \"string\",\n",
-    "                                \"description\": \"Specialty keyword such as oncology, cardiology, nephrology, nurse practitioner, clinic, dentist, psychologist, radiology, pediatrics, or emergency medicine\"\n",
-    "                            },\n",
-    "                            \"limit\": {\n",
-    "                                \"type\": \"integer\",\n",
-    "                                \"description\": \"Maximum number of taxonomy codes to return\"\n",
-    "                            }\n",
-    "                        },\n",
-    "                        \"required\": [\"keyword\"]\n",
-    "                    }\n",
-    "                }\n",
-    "            }\n",
-    "        },\n",
-    "        {\n",
-    "            \"toolSpec\": {\n",
-    "                \"name\": \"search_providers\",\n",
-    "                \"description\": \"Search healthcare providers by last name, state, city, specialty, or taxonomy-related keyword.\",\n",
-    "                \"inputSchema\": {\n",
-    "                    \"json\": {\n",
-    "                        \"type\": \"object\",\n",
-    "                        \"properties\": {\n",
-    "                            \"last_name\": {\n",
-    "                                \"type\": \"string\",\n",
-    "                                \"description\": \"Provider last name\"\n",
-    "                            },\n",
-    "                            \"state\": {\n",
-    "                                \"type\": \"string\",\n",
-    "                                \"description\": \"Two-letter US state abbreviation, such as MD, NY, CA\"\n",
-    "                            },\n",
-    "                            \"city\": {\n",
-    "                                \"type\": \"string\",\n",
-    "                                \"description\": \"Provider city\"\n",
-    "                            },\n",
-    "                            \"specialty\": {\n",
-    "                                \"type\": \"string\",\n",
-    "                                \"description\": \"Healthcare specialty or taxonomy keyword such as oncology, cardiology, dermatology, pediatrics, internal medicine, nurse practitioner, clinic, dentist, or psychologist\"\n",
-    "                            },\n",
-    "                            \"limit\": {\n",
-    "                                \"type\": \"integer\",\n",
-    "                                \"description\": \"Maximum number of provider records to return\"\n",
-    "                            }\n",
-    "                        }\n",
-    "                    }\n",
-    "                }\n",
-    "            }\n",
-    "        },\n",
-    "        {\n",
-    "            \"toolSpec\": {\n",
-    "                \"name\": \"count_providers_by_state\",\n",
-    "                \"description\": \"Count healthcare providers grouped by state.\",\n",
-    "                \"inputSchema\": {\n",
-    "                    \"json\": {\n",
-    "                        \"type\": \"object\",\n",
-    "                        \"properties\": {\n",
-    "                            \"limit\": {\n",
-    "                                \"type\": \"integer\",\n",
-    "                                \"description\": \"Maximum number of states to return\"\n",
-    "                            }\n",
-    "                        }\n",
-    "                    }\n",
-    "                }\n",
-    "            }\n",
-    "        }\n",
-    "    ]\n",
-    "}\n",
-    "\n",
-    "\n",
-    "# -----------------------------\n",
-    "# Execute selected tool\n",
-    "# -----------------------------\n",
-    "def execute_tool(tool_name, tool_input):\n",
-    "    if tool_name == \"find_provider_by_npi\":\n",
-    "        result = find_provider_by_npi(tool_input[\"npi\"])\n",
-    "        return df_to_json_records(result)\n",
-    "\n",
-    "    if tool_name == \"search_taxonomy_codes\":\n",
-    "        result = search_taxonomy_codes(\n",
-    "            keyword=tool_input.get(\"keyword\"),\n",
-    "            limit=tool_input.get(\"limit\", 100)\n",
-    "        )\n",
-    "        return df_to_json_records(result)\n",
-    "\n",
-    "    if tool_name == \"search_providers\":\n",
-    "        result = search_providers(\n",
-    "            last_name=tool_input.get(\"last_name\"),\n",
-    "            state=tool_input.get(\"state\"),\n",
-    "            city=tool_input.get(\"city\"),\n",
-    "            specialty=tool_input.get(\"specialty\"),\n",
-    "            limit=tool_input.get(\"limit\", 20)\n",
-    "        )\n",
-    "        return df_to_json_records(result)\n",
-    "\n",
-    "    if tool_name == \"count_providers_by_state\":\n",
-    "        result = count_providers_by_state(\n",
-    "            limit=tool_input.get(\"limit\", 20)\n",
-    "        )\n",
-    "        return df_to_json_records(result)\n",
-    "\n",
-    "    return {\"error\": f\"Unknown tool: {tool_name}\"}\n",
-    "\n",
-    "\n",
-    "# -----------------------------\n",
-    "# Bedrock Agent\n",
-    "# -----------------------------\n",
-    "def bedrock_agent(question):\n",
-    "    messages = [\n",
-    "        {\n",
-    "            \"role\": \"user\",\n",
-    "            \"content\": [\n",
-    "                {\n",
-    "                    \"text\": f\"\"\"\n",
-    "You are an NPI healthcare provider data assistant.\n",
-    "\n",
-    "Use the available tools to answer questions about the local NPI SQLite database.\n",
-    "\n",
-    "Important rules:\n",
-    "- Do not make up provider information.\n",
-    "- If the user asks about provider data, use a tool.\n",
-    "- If the user asks about a specialty, pass the specialty keyword to search_providers.\n",
-    "- search_providers will use the taxonomy_lookup table to find matching NUCC taxonomy codes.\n",
-    "- If the user asks about taxonomy codes directly, use search_taxonomy_codes.\n",
-    "- If no matching records are found, clearly say that.\n",
-    "- Keep the answer concise and explain the result in plain English.\n",
-    "- For state names, convert them to two-letter abbreviations when using tools.\n",
-    "\n",
-    "User question:\n",
-    "{question}\n",
-    "\"\"\"\n",
-    "                }\n",
-    "            ]\n",
-    "        }\n",
-    "    ]\n",
-    "\n",
-    "    response = bedrock.converse(\n",
-    "        modelId=BEDROCK_MODEL_ID,\n",
-    "        messages=messages,\n",
-    "        toolConfig=tool_config,\n",
-    "        inferenceConfig={\n",
-    "            \"maxTokens\": 800,\n",
-    "            \"temperature\": 0.1\n",
-    "        }\n",
-    "    )\n",
-    "\n",
-    "    output_message = response[\"output\"][\"message\"]\n",
-    "    messages.append(output_message)\n",
-    "\n",
-    "    for content_block in output_message[\"content\"]:\n",
-    "        if \"toolUse\" in content_block:\n",
-    "            tool_use = content_block[\"toolUse\"]\n",
-    "\n",
-    "            tool_name = tool_use[\"name\"]\n",
-    "            tool_input = tool_use[\"input\"]\n",
-    "            tool_use_id = tool_use[\"toolUseId\"]\n",
-    "\n",
-    "            print(f\"\\n[Bedrock selected tool: {tool_name}]\")\n",
-    "            print(f\"[Tool input: {tool_input}]\")\n",
-    "\n",
-    "            tool_result = execute_tool(tool_name, tool_input)\n",
-    "\n",
-    "            tool_result_message = {\n",
-    "                \"role\": \"user\",\n",
-    "                \"content\": [\n",
-    "                    {\n",
-    "                        \"toolResult\": {\n",
-    "                            \"toolUseId\": tool_use_id,\n",
-    "                            \"content\": [\n",
-    "                                {\n",
-    "                                    \"json\": tool_result\n",
-    "                                }\n",
-    "                            ]\n",
-    "                        }\n",
-    "                    }\n",
-    "                ]\n",
-    "            }\n",
-    "\n",
-    "            messages.append(tool_result_message)\n",
-    "\n",
-    "            final_response = bedrock.converse(\n",
-    "                modelId=BEDROCK_MODEL_ID,\n",
-    "                messages=messages,\n",
-    "                toolConfig=tool_config,\n",
-    "                inferenceConfig={\n",
-    "                    \"maxTokens\": 800,\n",
-    "                    \"temperature\": 0.1\n",
-    "                }\n",
-    "            )\n",
-    "\n",
-    "            return final_response[\"output\"][\"message\"][\"content\"][0][\"text\"]\n",
-    "\n",
-    "    return output_message[\"content\"][0].get(\"text\", \"No response generated.\")\n",
-    "\n",
-    "\n",
-    "# -----------------------------\n",
-    "# Chat loop\n",
-    "# -----------------------------\n",
-    "while True:\n",
-    "    question = input(\"\\nAsk about NPI data, or type 'quit': \")\n",
-    "\n",
-    "    if question.lower() == \"quit\":\n",
-    "        break\n",
-    "\n",
-    "    answer = bedrock_agent(question)\n",
-    "\n",
-    "    print(\"\\nAnswer:\")\n",
-    "    print(answer)"
-   ]
-  }
- ],
- "metadata": {
-  "kernelspec": {
-   "display_name": "Python 3 (ipykernel)",
-   "language": "python",
-   "name": "python3"
-  },
-  "language_info": {
-   "codemirror_mode": {
-    "name": "ipython",
-    "version": 3
-   },
-   "file_extension": ".py",
-   "mimetype": "text/x-python",
-   "name": "python",
-   "nbconvert_exporter": "python",
-   "pygments_lexer": "ipython3",
-   "version": "3.11.14"
-  }
- },
- "nbformat": 4,
- "nbformat_minor": 5
+
+
+# -----------------------------
+# Bedrock tool definitions
+# -----------------------------
+tool_config = {
+    "tools": [
+        {
+            "toolSpec": {
+                "name": "find_provider_by_npi",
+                "description": "Find one healthcare provider using a 10-digit NPI number.",
+                "inputSchema": {
+                    "json": {
+                        "type": "object",
+                        "properties": {
+                            "npi": {
+                                "type": "string",
+                                "description": "10-digit NPI number"
+                            }
+                        },
+                        "required": ["npi"]
+                    }
+                }
+            }
+        },
+        {
+            "toolSpec": {
+                "name": "search_taxonomy_codes",
+                "description": "Search the full NUCC healthcare taxonomy table by specialty, provider type, classification, specialization, or display name.",
+                "inputSchema": {
+                    "json": {
+                        "type": "object",
+                        "properties": {
+                            "keyword": {
+                                "type": "string",
+                                "description": "Specialty keyword such as oncology, cardiology, nephrology, nurse practitioner, clinic, dentist, psychologist, radiology, pediatrics, or emergency medicine"
+                            },
+                            "limit": {
+                                "type": "integer",
+                                "description": "Maximum number of taxonomy codes to return"
+                            }
+                        },
+                        "required": ["keyword"]
+                    }
+                }
+            }
+        },
+        {
+            "toolSpec": {
+                "name": "search_providers",
+                "description": "Search healthcare providers by last name, state, city, specialty, or taxonomy-related keyword.",
+                "inputSchema": {
+                    "json": {
+                        "type": "object",
+                        "properties": {
+                            "last_name": {
+                                "type": "string",
+                                "description": "Provider last name"
+                            },
+                            "state": {
+                                "type": "string",
+                                "description": "Two-letter US state abbreviation, such as MD, NY, CA"
+                            },
+                            "city": {
+                                "type": "string",
+                                "description": "Provider city"
+                            },
+                            "specialty": {
+                                "type": "string",
+                                "description": "Healthcare specialty or taxonomy keyword such as oncology, cardiology, dermatology, pediatrics, internal medicine, nurse practitioner, clinic, dentist, or psychologist"
+                            },
+                            "limit": {
+                                "type": "integer",
+                                "description": "Maximum number of provider records to return"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        {
+            "toolSpec": {
+                "name": "count_providers_by_state",
+                "description": "Count healthcare providers grouped by state.",
+                "inputSchema": {
+                    "json": {
+                        "type": "object",
+                        "properties": {
+                            "limit": {
+                                "type": "integer",
+                                "description": "Maximum number of states to return"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    ]
 }
+
+
+# -----------------------------
+# Execute selected tool
+# -----------------------------
+def execute_tool(tool_name, tool_input):
+    if tool_name == "find_provider_by_npi":
+        result = find_provider_by_npi(tool_input["npi"])
+        return df_to_json_records(result)
+
+    if tool_name == "search_taxonomy_codes":
+        result = search_taxonomy_codes(
+            keyword=tool_input.get("keyword"),
+            limit=tool_input.get("limit", 100)
+        )
+        return df_to_json_records(result)
+
+    if tool_name == "search_providers":
+        result = search_providers(
+            last_name=tool_input.get("last_name"),
+            state=tool_input.get("state"),
+            city=tool_input.get("city"),
+            specialty=tool_input.get("specialty"),
+            limit=tool_input.get("limit", 20)
+        )
+        return df_to_json_records(result)
+
+    if tool_name == "count_providers_by_state":
+        result = count_providers_by_state(
+            limit=tool_input.get("limit", 20)
+        )
+        return df_to_json_records(result)
+
+    return {"error": f"Unknown tool: {tool_name}"}
+
+
+# -----------------------------
+# Bedrock Agent
+# -----------------------------
+def bedrock_agent(question):
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "text": f"""
+You are an NPI healthcare provider data assistant.
+
+Use the available tools to answer questions about the local NPI SQLite database.
+
+Important rules:
+- Do not make up provider information.
+- If the user asks about provider data, use a tool.
+- If the user asks about a specialty, pass the specialty keyword to search_providers.
+- search_providers will use the taxonomy_lookup table to find matching NUCC taxonomy codes.
+- If the user asks about taxonomy codes directly, use search_taxonomy_codes.
+- If no matching records are found, clearly say that.
+- Keep the answer concise and explain the result in plain English.
+- For state names, convert them to two-letter abbreviations when using tools.
+
+User question:
+{question}
+"""
+                }
+            ]
+        }
+    ]
+
+    response = bedrock.converse(
+        modelId=BEDROCK_MODEL_ID,
+        messages=messages,
+        toolConfig=tool_config,
+        inferenceConfig={
+            "maxTokens": 800,
+            "temperature": 0.1
+        }
+    )
+
+    output_message = response["output"]["message"]
+    messages.append(output_message)
+
+    for content_block in output_message["content"]:
+        if "toolUse" in content_block:
+            tool_use = content_block["toolUse"]
+
+            tool_name = tool_use["name"]
+            tool_input = tool_use["input"]
+            tool_use_id = tool_use["toolUseId"]
+
+            print(f"\n[Bedrock selected tool: {tool_name}]")
+            print(f"[Tool input: {tool_input}]")
+
+            tool_result = execute_tool(tool_name, tool_input)
+
+            tool_result_message = {
+                "role": "user",
+                "content": [
+                    {
+                        "toolResult": {
+                            "toolUseId": tool_use_id,
+                            "content": [
+                                {
+                                    "json": tool_result
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+
+            messages.append(tool_result_message)
+
+            final_response = bedrock.converse(
+                modelId=BEDROCK_MODEL_ID,
+                messages=messages,
+                toolConfig=tool_config,
+                inferenceConfig={
+                    "maxTokens": 800,
+                    "temperature": 0.1
+                }
+            )
+
+            return final_response["output"]["message"]["content"][0]["text"]
+
+    return output_message["content"][0].get("text", "No response generated.")
+
+
+# -----------------------------
+# Chat loop
+# -----------------------------
+while True:
+    question = input("\nAsk about NPI data, or type 'quit': ")
+
+    if question.lower() == "quit":
+        break
+
+    answer = bedrock_agent(question)
+
+    print("\nAnswer:")
+    print(answer)
