@@ -399,13 +399,12 @@ User question:
 # -----------------------------
 # Chat loop
 # -----------------------------
-while True:
-    question = input("\nAsk about NPI data, or type 'quit': ")
+if __name__ == "__main__":
+    while True:
+        question=input("\nAsk about NPI data, or type 'quit': ")
 
-    if question.lower() == "quit":
-        break
+        if question.lower()=="quit":
+            break
 
-    answer = bedrock_agent(question)
-
-    print("\nAnswer:")
-    print(answer)
+        answer=bedrock_agent(question)
+        print(answer)
