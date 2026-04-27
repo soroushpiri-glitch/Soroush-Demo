@@ -1,5 +1,9 @@
 import os
 import boto3
+import sqlite3
+import pandas as pd
+
+DB_FILE = "npi.db"
 
 AWS_REGION = os.getenv("AWS_REGION", "us-east-2")
 BEDROCK_MODEL_ID = os.getenv(
