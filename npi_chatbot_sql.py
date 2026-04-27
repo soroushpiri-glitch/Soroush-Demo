@@ -1,26 +1,74 @@
 import os
+import re
 import boto3
 import sqlite3
 import pandas as pd
 import streamlit as st
 
-DB_FILE="npi.db"
+DB_FILE = "npi.db"
+
+AWS_REGION = st.secrets.get("AWS_REGION", "us-east-2")
+BEDROCK_MODEL_ID = st.secrets.get(
+    "BEDROCK_MODEL_ID",
+    "us.amazon.nova-lite-v1:0"
+)
+
+
+# -----------------------------
+# Database setup
+# -----------------------------
+def db_has_required_tables():
+    """
+    Check whether the local SQLite database already has
+    both required tables:
+    - npi_providers
+    - taxonomy_lookup
+    """
+
+    if not os.path.exists(DB_FILE):
+        return False
+
+    try:
+        conn = sqlite3.connect(DB_FILE)
+
+        tables = pd.read_sql_query(
+            "SELECT name FROM sqlite_master WHERE type='table';",
+            conn
+        )["name"].tolist()
+
+        conn.close()
+
+        return (
+            "npi_providers" in tables
+            and "taxonomy_lookup" in tables
+        )
+
+    except Exception:
+        return False
 
 
 def setup_database():
+    """
+    Download NPI and taxonomy CSV files from S3
+    and build a local SQLite database.
 
-    # only build once
-    if os.path.exists(DB_FILE):
+    This only rebuilds if the database is missing
+    or does not contain the required tables.
+    """
+
+    if db_has_required_tables():
         return
+
+    if os.path.exists(DB_FILE):
+        os.remove(DB_FILE)
 
     s3 = boto3.client(
         "s3",
-        region_name=st.secrets["AWS_REGION"],
+        region_name=AWS_REGION,
         aws_access_key_id=st.secrets["AWS_ACCESS_KEY_ID"],
         aws_secret_access_key=st.secrets["AWS_SECRET_ACCESS_KEY"]
     )
 
-    # download from S3
     s3.download_file(
         st.secrets["S3_BUCKET"],
         st.secrets["S3_NPI_KEY"],
@@ -35,11 +83,12 @@ def setup_database():
 
     conn = sqlite3.connect(DB_FILE)
 
-    # build provider table
     df = pd.read_csv(
         "npi_data.csv",
         low_memory=False
     )
+
+    df.columns = df.columns.str.strip()
 
     df.to_sql(
         "npi_providers",
@@ -48,11 +97,12 @@ def setup_database():
         index=False
     )
 
-    # build taxonomy lookup
     tax = pd.read_csv(
         "taxonomy.csv",
         dtype=str
     ).fillna("")
+
+    tax.columns = tax.columns.str.strip()
 
     tax["search_text"] = (
         tax["Code"] + " " +
@@ -74,15 +124,18 @@ def setup_database():
 
 setup_database()
 
-AWS_REGION = st.secrets.get("AWS_REGION", "us-east-2")
-BEDROCK_MODEL_ID = st.secrets.get("BEDROCK_MODEL_ID", "us.amazon.nova-lite-v1:0")
 
+# -----------------------------
+# AWS Bedrock client
+# -----------------------------
 bedrock = boto3.client(
     "bedrock-runtime",
     region_name=AWS_REGION,
     aws_access_key_id=st.secrets["AWS_ACCESS_KEY_ID"],
     aws_secret_access_key=st.secrets["AWS_SECRET_ACCESS_KEY"]
 )
+
+
 # -----------------------------
 # SQL helper
 # -----------------------------
@@ -91,6 +144,26 @@ def run_query(sql, params=None):
     result = pd.read_sql_query(sql, conn, params=params or [])
     conn.close()
     return result
+
+
+# -----------------------------
+# Utility
+# -----------------------------
+def strip_thinking(text):
+    """
+    Remove any leaked <thinking>...</thinking> blocks
+    from model output.
+    """
+
+    if not text:
+        return text
+
+    return re.sub(
+        r"<thinking>.*?</thinking>",
+        "",
+        text,
+        flags=re.DOTALL | re.IGNORECASE
+    ).strip()
 
 
 # -----------------------------
@@ -112,6 +185,7 @@ def find_provider_by_npi(npi):
     WHERE CAST(NPI AS TEXT) = ?
     LIMIT 1
     """
+
     return run_query(sql, [str(npi)])
 
 
@@ -133,7 +207,13 @@ def search_taxonomy_codes(keyword, limit=100):
     LIMIT ?
     """
 
-    return run_query(sql, [f"%{keyword.lower()}%", limit])
+    try:
+        return run_query(sql, [f"%{keyword.lower()}%", limit])
+    except Exception as e:
+        return pd.DataFrame([{
+            "error": "taxonomy_lookup query failed",
+            "details": str(e)
+        }])
 
 
 def search_providers(
@@ -180,11 +260,16 @@ def search_providers(
         sql += ' AND "Provider Business Practice Location Address City Name" LIKE ?'
         params.append(f"%{city}%")
 
-    # Advanced specialty search using taxonomy_lookup
     if specialty:
-        taxonomy_matches = search_taxonomy_codes(specialty, limit=200)
+        taxonomy_matches = search_taxonomy_codes(
+            specialty,
+            limit=200
+        )
 
-        if not taxonomy_matches.empty:
+        if (
+            not taxonomy_matches.empty
+            and "Code" in taxonomy_matches.columns
+        ):
             codes = (
                 taxonomy_matches["Code"]
                 .dropna()
@@ -192,17 +277,20 @@ def search_providers(
                 .tolist()
             )
 
-            taxonomy_conditions = []
+            if codes:
+                taxonomy_conditions = []
 
-            for i in range(1, 16):
-                col = f"Healthcare Provider Taxonomy Code_{i}"
-                placeholders = ",".join(["?"] * len(codes))
-                taxonomy_conditions.append(f'"{col}" IN ({placeholders})')
+                for i in range(1, 16):
+                    col = f"Healthcare Provider Taxonomy Code_{i}"
+                    placeholders = ",".join(["?"] * len(codes))
+                    taxonomy_conditions.append(
+                        f'"{col}" IN ({placeholders})'
+                    )
 
-            sql += " AND (" + " OR ".join(taxonomy_conditions) + ")"
+                sql += " AND (" + " OR ".join(taxonomy_conditions) + ")"
 
-            for _ in range(15):
-                params.extend(codes)
+                for _ in range(15):
+                    params.extend(codes)
 
         else:
             sql += ' AND "Healthcare Provider Taxonomy Group_1" LIKE ?'
@@ -224,6 +312,7 @@ def count_providers_by_state(limit=20):
     ORDER BY Provider_Count DESC
     LIMIT ?
     """
+
     return run_query(sql, [limit])
 
 
@@ -347,7 +436,9 @@ tool_config = {
 # -----------------------------
 def execute_tool(tool_name, tool_input):
     if tool_name == "find_provider_by_npi":
-        result = find_provider_by_npi(tool_input["npi"])
+        result = find_provider_by_npi(
+            tool_input["npi"]
+        )
         return df_to_json_records(result)
 
     if tool_name == "search_taxonomy_codes":
@@ -373,7 +464,9 @@ def execute_tool(tool_name, tool_input):
         )
         return df_to_json_records(result)
 
-    return {"error": f"Unknown tool: {tool_name}"}
+    return {
+        "error": f"Unknown tool: {tool_name}"
+    }
 
 
 # -----------------------------
@@ -399,6 +492,7 @@ Important rules:
 - If no matching records are found, clearly say that.
 - Keep the answer concise and explain the result in plain English.
 - For state names, convert them to two-letter abbreviations when using tools.
+- Do not output hidden reasoning, chain-of-thought, or <thinking> tags.
 
 User question:
 {question}
@@ -429,10 +523,10 @@ User question:
             tool_input = tool_use["input"]
             tool_use_id = tool_use["toolUseId"]
 
-            print(f"\n[Bedrock selected tool: {tool_name}]")
-            print(f"[Tool input: {tool_input}]")
-
-            tool_result = execute_tool(tool_name, tool_input)
+            tool_result = execute_tool(
+                tool_name,
+                tool_input
+            )
 
             tool_result_message = {
                 "role": "user",
@@ -462,20 +556,30 @@ User question:
                 }
             )
 
-            return final_response["output"]["message"]["content"][0]["text"]
+            text = final_response["output"]["message"]["content"][0]["text"]
+            return strip_thinking(text)
 
-    return output_message["content"][0].get("text", "No response generated.")
+    text = output_message["content"][0].get(
+        "text",
+        "No response generated."
+    )
+
+    return strip_thinking(text)
 
 
 # -----------------------------
-# Chat loop
+# Local terminal chat loop
 # -----------------------------
 if __name__ == "__main__":
     while True:
-        question=input("\nAsk about NPI data, or type 'quit': ")
+        question = input(
+            "\nAsk about NPI data, or type 'quit': "
+        )
 
-        if question.lower()=="quit":
+        if question.lower() == "quit":
             break
 
-        answer=bedrock_agent(question)
+        answer = bedrock_agent(question)
+
+        print("\nAnswer:")
         print(answer)
