@@ -215,7 +215,24 @@ def search_taxonomy_codes(keyword, limit=100):
             "error": "taxonomy_lookup query failed",
             "details": str(e)
         }])
+        
+def normalize_specialty(s):
+    if not s:
+        return s
 
+    s = s.lower().strip()
+
+    aliases = {
+        "oncologists": "oncology",
+        "oncologist": "oncology",
+        "cancer doctor": "oncology",
+        "cancer doctors": "oncology",
+        "heart doctor": "cardiology",
+        "cardiologist": "cardiology",
+        "cardiologists": "cardiology",
+    }
+
+    return aliases.get(s, s)
 
 def search_providers(
     last_name=None,
@@ -262,11 +279,12 @@ def search_providers(
         params.append(f"%{city}%")
 
     if specialty:
-        taxonomy_matches = search_taxonomy_codes(
-            specialty,
-            limit=200
-        )
+    specialty = normalize_specialty(specialty)
 
+    taxonomy_matches = search_taxonomy_codes(
+        specialty,
+        limit=200
+    )
         if (
             not taxonomy_matches.empty
             and "Code" in taxonomy_matches.columns
