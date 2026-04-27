@@ -279,12 +279,12 @@ def search_providers(
         params.append(f"%{city}%")
 
     if specialty:
-    specialty = normalize_specialty(specialty)
-
-    taxonomy_matches = search_taxonomy_codes(
-        specialty,
-        limit=200
-    )
+        specialty = normalize_specialty(specialty)
+    
+        taxonomy_matches = search_taxonomy_codes(
+            specialty,
+            limit=200
+        )
         if (
             not taxonomy_matches.empty
             and "Code" in taxonomy_matches.columns
