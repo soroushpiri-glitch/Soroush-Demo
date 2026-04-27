@@ -6,25 +6,33 @@ import pandas as pd
 import streamlit as st
 import json
 
+
+def get_secret(key, default=None):
+    try:
+        return st.secrets[key]
+    except KeyError:
+        if default is not None:
+            return default
+        st.error(f"Missing Streamlit secret: {key}")
+        st.write("Available secrets:", list(st.secrets.keys()))
+        st.stop()
+
+
 DB_FILE = "npi.db"
 
-AWS_REGION = st.secrets.get("AWS_REGION", "us-east-2")
-BEDROCK_MODEL_ID = st.secrets.get(
+AWS_REGION = get_secret("AWS_REGION", "us-east-2")
+BEDROCK_MODEL_ID = get_secret(
     "BEDROCK_MODEL_ID",
     "us.amazon.nova-lite-v1:0"
 )
 
 
-# -----------------------------
-# Database setup
-# -----------------------------
 def db_has_required_tables():
     if not os.path.exists(DB_FILE):
         return False
 
     try:
         conn = sqlite3.connect(DB_FILE)
-
         tables = pd.read_sql_query(
             "SELECT name FROM sqlite_master WHERE type='table';",
             conn
@@ -45,7 +53,6 @@ def db_has_required_tables():
         )["n"].iloc[0]
 
         conn.close()
-
         return npi_count > 0 and tax_count > 0
 
     except Exception:
@@ -62,19 +69,19 @@ def setup_database():
     s3 = boto3.client(
         "s3",
         region_name=AWS_REGION,
-        aws_access_key_id=st.secrets["AWS_ACCESS_KEY_ID"],
-        aws_secret_access_key=st.secrets["AWS_SECRET_ACCESS_KEY"]
+        aws_access_key_id=get_secret("AWS_ACCESS_KEY_ID"),
+        aws_secret_access_key=get_secret("AWS_SECRET_ACCESS_KEY")
     )
 
     s3.download_file(
-        st.secrets["S3_BUCKET"],
-        st.secrets["S3_NPI_KEY"],
+        get_secret("S3_BUCKET"),
+        get_secret("S3_NPI_KEY"),
         "npi_data.csv"
     )
 
     s3.download_file(
-        st.secrets["S3_BUCKET"],
-        st.secrets["S3_TAXONOMY_KEY"],
+        get_secret("S3_BUCKET"),
+        get_secret("S3_TAXONOMY_KEY"),
         "taxonomy.csv"
     )
 
@@ -82,13 +89,7 @@ def setup_database():
 
     df = pd.read_csv("npi_data.csv", low_memory=False)
     df.columns = df.columns.str.strip()
-
-    df.to_sql(
-        "npi_providers",
-        conn,
-        if_exists="replace",
-        index=False
-    )
+    df.to_sql("npi_providers", conn, if_exists="replace", index=False)
 
     tax = pd.read_csv("taxonomy.csv", dtype=str).fillna("")
     tax.columns = tax.columns.str.strip()
@@ -101,12 +102,7 @@ def setup_database():
         tax["Display Name"]
     ).str.lower()
 
-    tax.to_sql(
-        "taxonomy_lookup",
-        conn,
-        if_exists="replace",
-        index=False
-    )
+    tax.to_sql("taxonomy_lookup", conn, if_exists="replace", index=False)
 
     conn.close()
 
@@ -114,20 +110,14 @@ def setup_database():
 setup_database()
 
 
-# -----------------------------
-# AWS Bedrock client
-# -----------------------------
 bedrock = boto3.client(
     "bedrock-runtime",
     region_name=AWS_REGION,
-    aws_access_key_id=st.secrets["AWS_ACCESS_KEY_ID"],
-    aws_secret_access_key=st.secrets["AWS_SECRET_ACCESS_KEY"]
+    aws_access_key_id=get_secret("AWS_ACCESS_KEY_ID"),
+    aws_secret_access_key=get_secret("AWS_SECRET_ACCESS_KEY")
 )
 
 
-# -----------------------------
-# SQL helper
-# -----------------------------
 def run_query(sql, params=None):
     conn = sqlite3.connect(DB_FILE)
     result = pd.read_sql_query(sql, conn, params=params or [])
@@ -135,9 +125,6 @@ def run_query(sql, params=None):
     return result
 
 
-# -----------------------------
-# Utility
-# -----------------------------
 def strip_thinking(text):
     if not text:
         return text
@@ -174,9 +161,6 @@ def normalize_specialty(s):
     return aliases.get(s, s)
 
 
-# -----------------------------
-# SQL tools
-# -----------------------------
 def find_provider_by_npi(npi):
     sql = """
     SELECT 
@@ -259,11 +243,7 @@ def search_providers(
 
     if specialty:
         specialty = normalize_specialty(specialty)
-
-        taxonomy_matches = search_taxonomy_codes(
-            specialty,
-            limit=200
-        )
+        taxonomy_matches = search_taxonomy_codes(specialty, limit=200)
 
         if not taxonomy_matches.empty and "Code" in taxonomy_matches.columns:
             codes = (
@@ -290,7 +270,6 @@ def search_providers(
                     params.extend(codes)
             else:
                 return pd.DataFrame()
-
         else:
             return pd.DataFrame()
 
@@ -314,9 +293,6 @@ def count_providers_by_state(limit=20):
     return run_query(sql, [limit])
 
 
-# -----------------------------
-# Convert DataFrame to JSON-safe result
-# -----------------------------
 def df_to_json_records(result_df, max_rows=5):
     if result_df is None or result_df.empty:
         return {
@@ -328,10 +304,7 @@ def df_to_json_records(result_df, max_rows=5):
     clean_df = clean_df.where(pd.notnull(clean_df), None)
 
     records = clean_df.to_dict(orient="records")
-
-    safe_records = json.loads(
-        json.dumps(records, default=str)
-    )
+    safe_records = json.loads(json.dumps(records, default=str))
 
     return {
         "rows": safe_records,
@@ -387,9 +360,6 @@ def format_tool_result(tool_name, tool_result):
     return "\n".join(lines)
 
 
-# -----------------------------
-# Bedrock tool definitions
-# -----------------------------
 tool_config = {
     "tools": [
         {
@@ -486,14 +456,9 @@ tool_config = {
 }
 
 
-# -----------------------------
-# Execute selected tool
-# -----------------------------
 def execute_tool(tool_name, tool_input):
     if tool_name == "find_provider_by_npi":
-        result = find_provider_by_npi(
-            tool_input["npi"]
-        )
+        result = find_provider_by_npi(tool_input["npi"])
         return df_to_json_records(result, max_rows=5)
 
     if tool_name == "search_taxonomy_codes":
@@ -524,9 +489,6 @@ def execute_tool(tool_name, tool_input):
     }
 
 
-# -----------------------------
-# Bedrock Agent
-# -----------------------------
 def bedrock_agent(question):
     messages = [
         {
@@ -575,14 +537,10 @@ User question:
     for content_block in output_message["content"]:
         if "toolUse" in content_block:
             tool_use = content_block["toolUse"]
-
             tool_name = tool_use["name"]
             tool_input = tool_use["input"]
 
-            tool_result = execute_tool(
-                tool_name,
-                tool_input
-            )
+            tool_result = execute_tool(tool_name, tool_input)
 
             return format_tool_result(tool_name, tool_result)
 
@@ -594,9 +552,6 @@ User question:
     return strip_thinking(text)
 
 
-# -----------------------------
-# Local terminal chat loop
-# -----------------------------
 if __name__ == "__main__":
     while True:
         question = input("\nAsk about NPI data, or type 'quit': ")
