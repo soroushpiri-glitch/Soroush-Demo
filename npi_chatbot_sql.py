@@ -19,13 +19,6 @@ BEDROCK_MODEL_ID = st.secrets.get(
 # Database setup
 # -----------------------------
 def db_has_required_tables():
-    """
-    Check whether the local SQLite database already has
-    both required tables:
-    - npi_providers
-    - taxonomy_lookup
-    """
-
     if not os.path.exists(DB_FILE):
         return False
 
@@ -37,26 +30,29 @@ def db_has_required_tables():
             conn
         )["name"].tolist()
 
+        if "npi_providers" not in tables or "taxonomy_lookup" not in tables:
+            conn.close()
+            return False
+
+        npi_count = pd.read_sql_query(
+            "SELECT COUNT(*) AS n FROM npi_providers;",
+            conn
+        )["n"].iloc[0]
+
+        tax_count = pd.read_sql_query(
+            "SELECT COUNT(*) AS n FROM taxonomy_lookup;",
+            conn
+        )["n"].iloc[0]
+
         conn.close()
 
-        return (
-            "npi_providers" in tables
-            and "taxonomy_lookup" in tables
-        )
+        return npi_count > 0 and tax_count > 0
 
     except Exception:
         return False
 
 
 def setup_database():
-    """
-    Download NPI and taxonomy CSV files from S3
-    and build a local SQLite database.
-
-    This only rebuilds if the database is missing
-    or does not contain the required tables.
-    """
-
     if db_has_required_tables():
         return
 
@@ -84,11 +80,7 @@ def setup_database():
 
     conn = sqlite3.connect(DB_FILE)
 
-    df = pd.read_csv(
-        "npi_data.csv",
-        low_memory=False
-    )
-
+    df = pd.read_csv("npi_data.csv", low_memory=False)
     df.columns = df.columns.str.strip()
 
     df.to_sql(
@@ -98,11 +90,7 @@ def setup_database():
         index=False
     )
 
-    tax = pd.read_csv(
-        "taxonomy.csv",
-        dtype=str
-    ).fillna("")
-
+    tax = pd.read_csv("taxonomy.csv", dtype=str).fillna("")
     tax.columns = tax.columns.str.strip()
 
     tax["search_text"] = (
@@ -151,11 +139,6 @@ def run_query(sql, params=None):
 # Utility
 # -----------------------------
 def strip_thinking(text):
-    """
-    Remove any leaked <thinking>...</thinking> blocks
-    from model output.
-    """
-
     if not text:
         return text
 
@@ -165,6 +148,30 @@ def strip_thinking(text):
         text,
         flags=re.DOTALL | re.IGNORECASE
     ).strip()
+
+
+def normalize_specialty(s):
+    if not s:
+        return s
+
+    s = s.lower().strip()
+
+    aliases = {
+        "oncologists": "oncology",
+        "oncologist": "oncology",
+        "cancer doctor": "oncology",
+        "cancer doctors": "oncology",
+        "cancer specialist": "oncology",
+        "cancer specialists": "oncology",
+        "medical oncologist": "oncology",
+        "medical oncologists": "oncology",
+        "heart doctor": "cardiology",
+        "heart doctors": "cardiology",
+        "cardiologist": "cardiology",
+        "cardiologists": "cardiology",
+    }
+
+    return aliases.get(s, s)
 
 
 # -----------------------------
@@ -191,10 +198,7 @@ def find_provider_by_npi(npi):
 
 
 def search_taxonomy_codes(keyword, limit=100):
-    """
-    Search the NUCC taxonomy lookup table by keyword.
-    Example: oncology, cardiology, nurse practitioner, clinic, dentist.
-    """
+    keyword = normalize_specialty(keyword)
 
     sql = """
     SELECT
@@ -215,24 +219,7 @@ def search_taxonomy_codes(keyword, limit=100):
             "error": "taxonomy_lookup query failed",
             "details": str(e)
         }])
-        
-def normalize_specialty(s):
-    if not s:
-        return s
 
-    s = s.lower().strip()
-
-    aliases = {
-        "oncologists": "oncology",
-        "oncologist": "oncology",
-        "cancer doctor": "oncology",
-        "cancer doctors": "oncology",
-        "heart doctor": "cardiology",
-        "cardiologist": "cardiology",
-        "cardiologists": "cardiology",
-    }
-
-    return aliases.get(s, s)
 
 def search_providers(
     last_name=None,
@@ -241,14 +228,6 @@ def search_providers(
     specialty=None,
     limit=20
 ):
-    """
-    Search providers using optional filters:
-    - last name
-    - state
-    - city
-    - specialty/taxonomy
-    """
-
     sql = """
     SELECT
         NPI,
@@ -280,18 +259,17 @@ def search_providers(
 
     if specialty:
         specialty = normalize_specialty(specialty)
-    
+
         taxonomy_matches = search_taxonomy_codes(
             specialty,
             limit=200
         )
-        if (
-            not taxonomy_matches.empty
-            and "Code" in taxonomy_matches.columns
-        ):
+
+        if not taxonomy_matches.empty and "Code" in taxonomy_matches.columns:
             codes = (
                 taxonomy_matches["Code"]
                 .dropna()
+                .astype(str)
                 .unique()
                 .tolist()
             )
@@ -310,10 +288,11 @@ def search_providers(
 
                 for _ in range(15):
                     params.extend(codes)
+            else:
+                return pd.DataFrame()
 
         else:
-            sql += ' AND "Healthcare Provider Taxonomy Group_1" LIKE ?'
-            params.append(f"%{specialty}%")
+            return pd.DataFrame()
 
     sql += " LIMIT ?"
     params.append(limit)
@@ -338,12 +317,7 @@ def count_providers_by_state(limit=20):
 # -----------------------------
 # Convert DataFrame to JSON-safe result
 # -----------------------------
-def df_to_json_records(result_df, max_rows=10):
-    """
-    Convert pandas DataFrame to Bedrock-safe JSON.
-    Removes NaN values and converts unsupported values to strings.
-    """
-
+def df_to_json_records(result_df, max_rows=5):
     if result_df is None or result_df.empty:
         return {
             "rows": [],
@@ -351,13 +325,10 @@ def df_to_json_records(result_df, max_rows=10):
         }
 
     clean_df = result_df.head(max_rows).copy()
-
-    # Replace NaN/NaT/pandas missing values with None
     clean_df = clean_df.where(pd.notnull(clean_df), None)
 
     records = clean_df.to_dict(orient="records")
 
-    # Force JSON-safe conversion
     safe_records = json.loads(
         json.dumps(records, default=str)
     )
@@ -366,6 +337,54 @@ def df_to_json_records(result_df, max_rows=10):
         "rows": safe_records,
         "row_count_returned": len(safe_records)
     }
+
+
+def format_tool_result(tool_name, tool_result):
+    rows = tool_result.get("rows", [])
+
+    if not rows:
+        return tool_result.get("message", "No matching records found.")
+
+    lines = [f"Found {len(rows)} matching record(s):"]
+
+    for row in rows:
+        if tool_name == "search_providers":
+            name_parts = [
+                row.get("Provider First Name"),
+                row.get("Provider Last Name (Legal Name)")
+            ]
+            name = " ".join([x for x in name_parts if x])
+
+            org = row.get("Provider Organization Name (Legal Business Name)")
+            city = row.get("City")
+            state = row.get("State")
+            npi = row.get("NPI")
+            tax = row.get("Taxonomy_1")
+
+            display_name = name if name else org if org else "Unknown provider"
+
+            lines.append(
+                f"- {display_name} | NPI: {npi} | {city}, {state} | Taxonomy: {tax}"
+            )
+
+        elif tool_name == "search_taxonomy_codes":
+            lines.append(
+                f"- {row.get('Code')} | {row.get('Classification')} | "
+                f"{row.get('Specialization')} | {row.get('Display Name')}"
+            )
+
+        elif tool_name == "count_providers_by_state":
+            lines.append(
+                f"- {row.get('State')}: {row.get('Provider_Count')}"
+            )
+
+        elif tool_name == "find_provider_by_npi":
+            lines.append(str(row))
+
+        else:
+            lines.append(str(row))
+
+    return "\n".join(lines)
 
 
 # -----------------------------
@@ -482,7 +501,7 @@ def execute_tool(tool_name, tool_input):
             keyword=tool_input.get("keyword"),
             limit=tool_input.get("limit", 100)
         )
-       return df_to_json_records(result, max_rows=5)
+        return df_to_json_records(result, max_rows=5)
 
     if tool_name == "search_providers":
         result = search_providers(
@@ -538,18 +557,20 @@ User question:
         }
     ]
 
-    response = bedrock.converse(
-        modelId=BEDROCK_MODEL_ID,
-        messages=messages,
-        toolConfig=tool_config,
-        inferenceConfig={
-            "maxTokens": 800,
-            "temperature": 0.1
-        }
-    )
+    try:
+        response = bedrock.converse(
+            modelId=BEDROCK_MODEL_ID,
+            messages=messages,
+            toolConfig=tool_config,
+            inferenceConfig={
+                "maxTokens": 800,
+                "temperature": 0.1
+            }
+        )
+    except Exception as e:
+        return f"Bedrock first response error: {type(e).__name__}: {str(e)}"
 
     output_message = response["output"]["message"]
-    messages.append(output_message)
 
     for content_block in output_message["content"]:
         if "toolUse" in content_block:
@@ -557,48 +578,13 @@ User question:
 
             tool_name = tool_use["name"]
             tool_input = tool_use["input"]
-            tool_use_id = tool_use["toolUseId"]
 
             tool_result = execute_tool(
                 tool_name,
                 tool_input
             )
-            if tool_result.get("rows"):
-                return f"Found {len(tool_result['rows'])} matching records:\n\n{tool_result['rows']}"
-            else:
-                return tool_result.get("message", "No matching records found.")
-            
 
-            tool_result_message = {
-                "role": "user",
-                "content": [
-                    {
-                        "toolResult": {
-                            "toolUseId": tool_use_id,
-                            "content": [
-                                {
-                                    "json": tool_result
-                                }
-                            ]
-                        }
-                    }
-                ]
-            }
-
-            messages.append(tool_result_message)
-
-            
-            final_response = bedrock.converse(
-                modelId=BEDROCK_MODEL_ID,
-                messages=messages,
-                inferenceConfig={
-                    "maxTokens": 800,
-                    "temperature": 0.1
-                }
-            )
-
-            text = final_response["output"]["message"]["content"][0]["text"]
-            return strip_thinking(text)
+            return format_tool_result(tool_name, tool_result)
 
     text = output_message["content"][0].get(
         "text",
@@ -613,9 +599,7 @@ User question:
 # -----------------------------
 if __name__ == "__main__":
     while True:
-        question = input(
-            "\nAsk about NPI data, or type 'quit': "
-        )
+        question = input("\nAsk about NPI data, or type 'quit': ")
 
         if question.lower() == "quit":
             break
