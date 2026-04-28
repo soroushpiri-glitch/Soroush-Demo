@@ -292,7 +292,157 @@ def count_providers_by_state(limit=20):
 
     return run_query(sql, [limit])
 
+def count_providers_by_city(state=None, specialty=None, limit=20):
+    sql = """
+    SELECT
+        "Provider Business Practice Location Address City Name" AS City,
+        "Provider Business Practice Location Address State Name" AS State,
+        COUNT(*) AS Provider_Count
+    FROM npi_providers
+    WHERE 1=1
+    """
 
+    params = []
+
+    if state:
+        sql += ' AND "Provider Business Practice Location Address State Name" = ?'
+        params.append(state.upper())
+
+    if specialty:
+        taxonomy_matches = search_taxonomy_codes(specialty, limit=200)
+
+        if taxonomy_matches.empty or "Code" not in taxonomy_matches.columns:
+            return pd.DataFrame()
+
+        codes = taxonomy_matches["Code"].dropna().astype(str).unique().tolist()
+
+        if not codes:
+            return pd.DataFrame()
+
+        taxonomy_conditions = []
+        for i in range(1, 16):
+            col = f"Healthcare Provider Taxonomy Code_{i}"
+            placeholders = ",".join(["?"] * len(codes))
+            taxonomy_conditions.append(f'"{col}" IN ({placeholders})')
+
+        sql += " AND (" + " OR ".join(taxonomy_conditions) + ")"
+
+        for _ in range(15):
+            params.extend(codes)
+
+    sql += """
+    GROUP BY City, State
+    ORDER BY Provider_Count DESC
+    LIMIT ?
+    """
+
+    params.append(limit)
+    return run_query(sql, params)
+
+
+def count_providers_by_taxonomy(state=None, city=None, limit=20):
+    sql = """
+    SELECT
+        p."Healthcare Provider Taxonomy Code_1" AS Taxonomy_Code,
+        t."Display Name" AS Taxonomy_Display_Name,
+        t.Classification,
+        t.Specialization,
+        COUNT(*) AS Provider_Count
+    FROM npi_providers p
+    LEFT JOIN taxonomy_lookup t
+        ON p."Healthcare Provider Taxonomy Code_1" = t.Code
+    WHERE p."Healthcare Provider Taxonomy Code_1" IS NOT NULL
+    """
+
+    params = []
+
+    if state:
+        sql += ' AND p."Provider Business Practice Location Address State Name" = ?'
+        params.append(state.upper())
+
+    if city:
+        sql += ' AND p."Provider Business Practice Location Address City Name" LIKE ?'
+        params.append(f"%{city}%")
+
+    sql += """
+    GROUP BY Taxonomy_Code, Taxonomy_Display_Name, Classification, Specialization
+    ORDER BY Provider_Count DESC
+    LIMIT ?
+    """
+
+    params.append(limit)
+    return run_query(sql, params)
+
+
+def compare_specialty_between_states(specialty, states, limit=50):
+    if not specialty or not states:
+        return pd.DataFrame()
+
+    taxonomy_matches = search_taxonomy_codes(specialty, limit=200)
+
+    if taxonomy_matches.empty or "Code" not in taxonomy_matches.columns:
+        return pd.DataFrame()
+
+    codes = taxonomy_matches["Code"].dropna().astype(str).unique().tolist()
+
+    if not codes:
+        return pd.DataFrame()
+
+    state_placeholders = ",".join(["?"] * len(states))
+
+    taxonomy_conditions = []
+    params = [s.upper() for s in states]
+
+    for i in range(1, 16):
+        col = f"Healthcare Provider Taxonomy Code_{i}"
+        placeholders = ",".join(["?"] * len(codes))
+        taxonomy_conditions.append(f'"{col}" IN ({placeholders})')
+
+    for _ in range(15):
+        params.extend(codes)
+
+    sql = f"""
+    SELECT
+        "Provider Business Practice Location Address State Name" AS State,
+        COUNT(*) AS Provider_Count
+    FROM npi_providers
+    WHERE "Provider Business Practice Location Address State Name" IN ({state_placeholders})
+    AND ({ " OR ".join(taxonomy_conditions) })
+    GROUP BY State
+    ORDER BY Provider_Count DESC
+    LIMIT ?
+    """
+
+    params.append(limit)
+    return run_query(sql, params)
+
+
+def provider_type_breakdown(state=None, city=None):
+    sql = """
+    SELECT
+        "Entity Type Code" AS Entity_Type_Code,
+        COUNT(*) AS Provider_Count
+    FROM npi_providers
+    WHERE 1=1
+    """
+
+    params = []
+
+    if state:
+        sql += ' AND "Provider Business Practice Location Address State Name" = ?'
+        params.append(state.upper())
+
+    if city:
+        sql += ' AND "Provider Business Practice Location Address City Name" LIKE ?'
+        params.append(f"%{city}%")
+
+    sql += """
+    GROUP BY "Entity Type Code"
+    ORDER BY Provider_Count DESC
+    """
+
+    return run_query(sql, params)
+    
 def df_to_json_records(result_df, max_rows=5):
     if result_df is None or result_df.empty:
         return {
@@ -353,6 +503,30 @@ def format_tool_result(tool_name, tool_result):
 
         elif tool_name == "find_provider_by_npi":
             lines.append(str(row))
+
+                elif tool_name == "count_providers_by_city":
+            lines.append(
+                f"- {row.get('City')}, {row.get('State')}: {row.get('Provider_Count')}"
+            )
+
+        elif tool_name == "count_providers_by_taxonomy":
+            lines.append(
+                f"- {row.get('Taxonomy_Code')} | {row.get('Taxonomy_Display_Name')} | "
+                f"{row.get('Classification')} | {row.get('Specialization')} | "
+                f"Count: {row.get('Provider_Count')}"
+            )
+
+        elif tool_name == "compare_specialty_between_states":
+            lines.append(
+                f"- {row.get('State')}: {row.get('Provider_Count')}"
+            )
+
+        elif tool_name == "provider_type_breakdown":
+            entity = row.get("Entity_Type_Code")
+            label = "Individual Provider" if str(entity) == "1" else "Organization Provider" if str(entity) == "2" else "Unknown"
+            lines.append(
+                f"- {label} Entity Type {entity}: {row.get('Provider_Count')}"
+            )
 
         else:
             lines.append(str(row))
@@ -451,7 +625,106 @@ tool_config = {
                     }
                 }
             }
+        },
+
+        {
+    "toolSpec": {
+        "name": "count_providers_by_city",
+        "description": "Count providers grouped by city, optionally filtered by state and specialty.",
+        "inputSchema": {
+            "json": {
+                "type": "object",
+                "properties": {
+                    "state": {
+                        "type": "string",
+                        "description": "Two-letter state abbreviation such as MD, NY, CA"
+                    },
+                    "specialty": {
+                        "type": "string",
+                        "description": "Healthcare specialty such as oncology, cardiology, pediatrics, or dermatology"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of cities to return"
+                    }
+                }
+            }
         }
+    }
+},
+{
+    "toolSpec": {
+        "name": "count_providers_by_taxonomy",
+        "description": "Count providers grouped by taxonomy code, optionally filtered by state and city.",
+        "inputSchema": {
+            "json": {
+                "type": "object",
+                "properties": {
+                    "state": {
+                        "type": "string",
+                        "description": "Two-letter state abbreviation"
+                    },
+                    "city": {
+                        "type": "string",
+                        "description": "City name"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of taxonomy groups to return"
+                    }
+                }
+            }
+        }
+    }
+},
+{
+    "toolSpec": {
+        "name": "compare_specialty_between_states",
+        "description": "Compare the number of providers for a specialty across multiple states.",
+        "inputSchema": {
+            "json": {
+                "type": "object",
+                "properties": {
+                    "specialty": {
+                        "type": "string",
+                        "description": "Specialty such as oncology, cardiology, dermatology, or pediatrics"
+                    },
+                    "states": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of two-letter state abbreviations"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of rows to return"
+                    }
+                },
+                "required": ["specialty", "states"]
+            }
+        }
+    }
+},
+{
+    "toolSpec": {
+        "name": "provider_type_breakdown",
+        "description": "Break providers into individual providers versus organization providers using Entity Type Code.",
+        "inputSchema": {
+            "json": {
+                "type": "object",
+                "properties": {
+                    "state": {
+                        "type": "string",
+                        "description": "Two-letter state abbreviation"
+                    },
+                    "city": {
+                        "type": "string",
+                        "description": "City name"
+                    }
+                }
+            }
+        }
+    }
+}
     ]
 }
 
@@ -488,6 +761,37 @@ def execute_tool(tool_name, tool_input):
         "error": f"Unknown tool: {tool_name}"
     }
 
+    if tool_name == "count_providers_by_city":
+        result = count_providers_by_city(
+            state=tool_input.get("state"),
+            specialty=tool_input.get("specialty"),
+            limit=tool_input.get("limit", 20)
+        )
+        return df_to_json_records(result, max_rows=20)
+
+    if tool_name == "count_providers_by_taxonomy":
+        result = count_providers_by_taxonomy(
+            state=tool_input.get("state"),
+            city=tool_input.get("city"),
+            limit=tool_input.get("limit", 20)
+        )
+        return df_to_json_records(result, max_rows=20)
+
+    if tool_name == "compare_specialty_between_states":
+        result = compare_specialty_between_states(
+            specialty=tool_input.get("specialty"),
+            states=tool_input.get("states", []),
+            limit=tool_input.get("limit", 50)
+        )
+        return df_to_json_records(result, max_rows=50)
+
+    if tool_name == "provider_type_breakdown":
+        result = provider_type_breakdown(
+            state=tool_input.get("state"),
+            city=tool_input.get("city")
+        )
+        return df_to_json_records(result, max_rows=10)
+
 
 def bedrock_agent(question):
     messages = [
@@ -502,14 +806,16 @@ Use the available tools to answer questions about the local NPI SQLite database.
 
 Important rules:
 - Do not make up provider information.
-- If the user asks about provider data, use a tool.
-- If the user asks about a specialty, pass the specialty keyword to search_providers.
-- search_providers will use the taxonomy_lookup table to find matching NUCC taxonomy codes.
-- If the user asks about taxonomy codes directly, use search_taxonomy_codes.
-- If no matching records are found, clearly say that.
-- Keep the answer concise and explain the result in plain English.
-- For state names, convert them to two-letter abbreviations when using tools.
+- If the user asks about provider data, always use a tool.
+- If the user asks about a specialty, use taxonomy-aware tools.
+- If the user asks for comparison, use comparison or count tools.
+- If the user asks for top cities, provider density, distribution, or rankings, use count tools.
+- If the user asks about individual vs organization providers, use provider_type_breakdown.
+- If the user asks about taxonomy categories, use search_taxonomy_codes or count_providers_by_taxonomy.
+- Convert state names to two-letter abbreviations when using tools.
+- Keep answers concise and plain English.
 - Do not output hidden reasoning, chain-of-thought, or <thinking> tags.
+- If no matching records are found, clearly say that.
 
 User question:
 {question}
