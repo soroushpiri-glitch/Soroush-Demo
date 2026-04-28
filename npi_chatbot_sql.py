@@ -504,7 +504,7 @@ def format_tool_result(tool_name, tool_result):
         elif tool_name == "find_provider_by_npi":
             lines.append(str(row))
 
-                elif tool_name == "count_providers_by_city":
+        elif tool_name == "count_providers_by_city":
             lines.append(
                 f"- {row.get('City')}, {row.get('State')}: {row.get('Provider_Count')}"
             )
