@@ -51,20 +51,62 @@ def geocode_address(address):
         if not address or not str(address).strip():
             return None, None
 
+        address = str(address).strip()
+
         geolocator = Nominatim(
             user_agent="npi_healthcare_agent_soroush",
-            timeout=10
+            timeout=15
         )
 
+        # Try exact address first
         location = geolocator.geocode(
-            str(address),
+            address,
+            exactly_one=True,
             country_codes="us"
         )
 
         if location:
             return location.latitude, location.longitude
 
-        return None, None
+        # Fallback: try city/state from address
+        if "," in address:
+            parts = [p.strip() for p in address.split(",") if p.strip()]
+
+            if len(parts) >= 2:
+                fallback_address = ", ".join(parts[-2:])
+
+                location = geolocator.geocode(
+                    fallback_address,
+                    exactly_one=True,
+                    country_codes="us"
+                )
+
+                if location:
+                    return location.latitude, location.longitude
+
+        # Final fallback for common locations
+        fallback_locations = {
+            "baltimore": (39.2904, -76.6122),
+            "baltimore md": (39.2904, -76.6122),
+            "baltimore, md": (39.2904, -76.6122),
+            "maryland": (39.0458, -76.6413),
+            "washington dc": (38.9072, -77.0369),
+            "washington, dc": (38.9072, -77.0369),
+            "new york": (40.7128, -74.0060),
+            "new york, ny": (40.7128, -74.0060)
+        }
+
+        key = (
+            address.lower()
+            .replace("usa", "")
+            .replace("united states", "")
+            .replace(",", " ")
+            .strip()
+        )
+
+        key = " ".join(key.split())
+
+        return fallback_locations.get(key, (None, None))
 
     except (GeocoderUnavailable, GeocoderTimedOut, GeocoderServiceError):
         return None, None
@@ -114,8 +156,8 @@ def create_provider_map(user_address, providers):
 
     if user_lat is None:
         st.error(
-            "Could not find your location. Try a fuller format, for example: "
-            "`2907 Fallstaff Road, Baltimore, MD, USA` or `Baltimore, MD`."
+            "Could not find your location. Try `Baltimore, MD`, a ZIP code, "
+            "or a fuller address such as `2907 Fallstaff Road, Baltimore, MD, USA`."
         )
         return []
 
@@ -130,7 +172,8 @@ def create_provider_map(user_address, providers):
 
     results = []
 
-    for provider in providers:
+    # Limit to first 8 to avoid geocoder rate limits
+    for provider in providers[:8]:
         provider_address = provider.get("address")
 
         if not provider_address:
@@ -242,7 +285,7 @@ st.subheader("Provider Map")
 
 user_address = st.text_input(
     "Enter your address, city, or ZIP code:",
-    placeholder="Example: 2907 Fallstaff Road, Baltimore, MD, USA"
+    placeholder="Example: Baltimore, MD"
 )
 
 map_button = st.button("Show Map for Latest Provider Results")
@@ -267,5 +310,6 @@ if map_button:
 
             if not mapped_results:
                 st.warning(
-                    "Could not geocode provider addresses. Try again later or use a broader location like `Baltimore, MD`."
+                    "Could not geocode provider addresses. Try asking for fewer providers, "
+                    "for example: `Show oncologists in Baltimore only`, then map again."
                 )
