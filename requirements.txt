@@ -1,3 +1,6 @@
 streamlit
 pandas
 boto3
+geopy
+folium
+streamlit-folium
