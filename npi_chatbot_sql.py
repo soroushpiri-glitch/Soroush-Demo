@@ -881,7 +881,21 @@ def execute_tool(tool_name, tool_input):
     }
 
 
-def bedrock_agent(question):
+def bedrock_agent(question, history=None):
+    context_text = ""
+
+    if history:
+        recent_history = history[-5:]
+
+        context_parts = []
+        for item in recent_history:
+            context_parts.append(
+                f"Previous question: {item.get('question', '')}\n"
+                f"Previous answer: {item.get('answer', '')}"
+            )
+
+        context_text = "\n\n".join(context_parts)
+
     messages = [
         {
             "role": "user",
@@ -890,7 +904,28 @@ def bedrock_agent(question):
                     "text": f"""
 You are an NPI healthcare provider data assistant.
 
-Use the available tools to answer questions about the local NPI SQLite database.
+You have access to previous conversation history. Use it to understand follow-up questions such as:
+- those
+- them
+- that city
+- the previous result
+- same specialty
+- same state
+- compare that
+
+Before using a tool, silently rewrite the user's latest question into a complete standalone question using the previous conversation context.
+
+Example:
+Previous question: Find oncologists in Maryland
+Previous answer: Found providers in Maryland.
+Latest question: Show only those in Baltimore
+Standalone meaning: Find oncologists in Baltimore, Maryland.
+
+Example:
+Previous question: Find oncologists in Maryland
+Previous answer: Found providers with taxonomy 207RH0003X.
+Latest question: Which of those have taxonomy 207RH0003X only?
+Standalone meaning: Find Maryland oncologists with taxonomy 207RH0003X only.
 
 Important rules:
 - Do not make up provider information.
@@ -905,7 +940,10 @@ Important rules:
 - Do not output hidden reasoning, chain-of-thought, or <thinking> tags.
 - If no matching records are found, clearly say that.
 
-User question:
+Previous conversation history:
+{context_text}
+
+Latest user question:
 {question}
 """
                 }
