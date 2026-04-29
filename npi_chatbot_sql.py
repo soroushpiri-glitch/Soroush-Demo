@@ -336,11 +336,13 @@ def search_providers(
         params.append(f"%{city}%")
 
     if entity_type:
-        if entity_type.lower() in ["individual", "individuals", "person", "people"]:
+        entity_type = entity_type.lower()
+
+        if entity_type in ["individual", "individuals", "person", "people"]:
             sql += ' AND "Entity Type Code" = ?'
             params.append(1)
 
-        elif entity_type.lower() in ["organization", "organizations", "company", "companies"]:
+        elif entity_type in ["organization", "organizations", "company", "companies"]:
             sql += ' AND "Entity Type Code" = ?'
             params.append(2)
 
@@ -866,15 +868,15 @@ def execute_tool(tool_name, tool_input):
         return df_to_json_records(result, max_rows=5)
 
     if tool_name == "search_providers":
-    result = search_providers(
-        last_name=tool_input.get("last_name"),
-        state=tool_input.get("state"),
-        city=tool_input.get("city"),
-        specialty=tool_input.get("specialty"),
-        taxonomy_code=tool_input.get("taxonomy_code"),
-        entity_type=tool_input.get("entity_type"),
-        limit=tool_input.get("limit", 20)
-    )
+        result = search_providers(
+            last_name=tool_input.get("last_name"),
+            state=tool_input.get("state"),
+            city=tool_input.get("city"),
+            specialty=tool_input.get("specialty"),
+            taxonomy_code=tool_input.get("taxonomy_code"),
+            entity_type=tool_input.get("entity_type"),
+            limit=tool_input.get("limit", 20)
+        )
         return df_to_json_records(result, max_rows=20)
 
     if tool_name == "count_providers_by_state":
@@ -918,8 +920,7 @@ def execute_tool(tool_name, tool_input):
         "rows": [],
         "message": f"Unknown tool: {tool_name}"
     }
-
-
+    
 def bedrock_agent(question, history=None):
     context_text = ""
 
