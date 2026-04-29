@@ -61,16 +61,7 @@ def clean_address_for_geocoding(address):
         else:
             cleaned_parts.append(part)
 
-    cleaned_address = " ".join(cleaned_parts)
-
-    cleaned_address = (
-        cleaned_address
-        .replace("  ", " ")
-        .replace(" ,", ",")
-        .strip()
-    )
-
-    return cleaned_address
+    return " ".join(cleaned_parts).replace("  ", " ").strip()
 
 
 @st.cache_data(show_spinner=False)
@@ -101,8 +92,7 @@ def geocode_address(address):
         .strip()
     )
 
-    key_no_comma = key.replace(",", " ")
-    key_no_comma = " ".join(key_no_comma.split())
+    key_no_comma = " ".join(key.replace(",", " ").split())
 
     if key in fallback_locations:
         return fallback_locations[key]
@@ -112,18 +102,15 @@ def geocode_address(address):
 
     cleaned_address = clean_address_for_geocoding(address)
 
-    # Try ArcGIS first
     try:
         arcgis = ArcGIS(timeout=10)
         location = arcgis.geocode(cleaned_address)
 
         if location:
             return location.latitude, location.longitude
-
     except Exception:
         pass
 
-    # Try Nominatim second
     try:
         nominatim = Nominatim(
             user_agent="npi_healthcare_agent_soroush",
@@ -138,7 +125,6 @@ def geocode_address(address):
 
         if location:
             return location.latitude, location.longitude
-
     except Exception:
         pass
 
@@ -161,18 +147,12 @@ def parse_provider_lines(answer):
             if len(parts) < 5:
                 continue
 
-            name = parts[0].strip()
-            entity = parts[1].strip()
-            npi = parts[2].replace("NPI:", "").strip()
-            address = parts[3].strip()
-            taxonomy = parts[4].replace("Taxonomy:", "").strip()
-
             providers.append({
-                "name": name,
-                "entity": entity,
-                "npi": npi,
-                "address": address,
-                "taxonomy": taxonomy
+                "name": parts[0].strip(),
+                "entity": parts[1].strip(),
+                "npi": parts[2].replace("NPI:", "").strip(),
+                "address": parts[3].strip(),
+                "taxonomy": parts[4].replace("Taxonomy:", "").strip()
             })
 
         except Exception:
@@ -181,15 +161,11 @@ def parse_provider_lines(answer):
     return providers
 
 
-def create_provider_map(user_address, providers):
+def build_provider_map(user_address, providers):
     user_lat, user_lon = geocode_address(user_address)
 
     if user_lat is None:
-        st.error(
-            "Could not find your location. Try `Baltimore, MD`, a ZIP code, "
-            "or a fuller address such as `2907 Fallstaff Road, Baltimore, MD, USA`."
-        )
-        return []
+        return None, []
 
     m = folium.Map(location=[user_lat, user_lon], zoom_start=10)
 
@@ -216,16 +192,14 @@ def create_provider_map(user_address, providers):
 
         distance = geodesic((user_lat, user_lon), (lat, lon)).miles
 
-        result = {
+        results.append({
             "Name": provider.get("name"),
             "Entity": provider.get("entity"),
             "NPI": provider.get("npi"),
             "Address": cleaned_provider_address,
             "Taxonomy": provider.get("taxonomy"),
             "Distance (miles)": round(distance, 2)
-        }
-
-        results.append(result)
+        })
 
         popup_text = f"""
         <b>{provider.get("name")}</b><br>
@@ -245,18 +219,20 @@ def create_provider_map(user_address, providers):
 
     results = sorted(results, key=lambda x: x["Distance (miles)"])
 
-    if results:
-        st.markdown("### Closest Providers")
-        st.dataframe(results, use_container_width=True)
-
-        st.markdown("### Interactive Map")
-        st_folium(m, width=1000, height=550)
-
-    return results
+    return m, results
 
 
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
+
+if "show_map" not in st.session_state:
+    st.session_state.show_map = False
+
+if "map_object" not in st.session_state:
+    st.session_state.map_object = None
+
+if "mapped_results" not in st.session_state:
+    st.session_state.mapped_results = []
 
 
 question = st.text_input("Ask a question about NPI provider data:")
@@ -272,6 +248,9 @@ with col2:
 
 if clear_button:
     st.session_state.chat_history = []
+    st.session_state.show_map = False
+    st.session_state.map_object = None
+    st.session_state.mapped_results = []
     st.rerun()
 
 
@@ -318,9 +297,23 @@ user_address = st.text_input(
     placeholder="Example: Baltimore, MD"
 )
 
-map_button = st.button("Show Map for Latest Provider Results")
+map_col1, map_col2 = st.columns(2)
 
-if map_button:
+with map_col1:
+    show_map_button = st.button("Show Map for Latest Provider Results")
+
+with map_col2:
+    clear_map_button = st.button("Clear Map")
+
+
+if clear_map_button:
+    st.session_state.show_map = False
+    st.session_state.map_object = None
+    st.session_state.mapped_results = []
+    st.rerun()
+
+
+if show_map_button:
     if not user_address.strip():
         st.warning("Please enter your address, city, or ZIP code first.")
 
@@ -336,10 +329,25 @@ if map_button:
 
         else:
             with st.spinner("Creating provider map..."):
-                mapped_results = create_provider_map(user_address, providers)
+                map_object, mapped_results = build_provider_map(
+                    user_address,
+                    providers
+                )
 
-            if not mapped_results:
+            if not mapped_results or map_object is None:
                 st.warning(
                     "Could not geocode provider addresses. Try asking for fewer providers, "
                     "for example: `Show oncologists in Baltimore only`, then map again."
                 )
+            else:
+                st.session_state.show_map = True
+                st.session_state.map_object = map_object
+                st.session_state.mapped_results = mapped_results
+
+
+if st.session_state.show_map:
+    st.markdown("### Closest Providers")
+    st.dataframe(st.session_state.mapped_results, use_container_width=True)
+
+    st.markdown("### Interactive Map")
+    st_folium(st.session_state.map_object, width=1000, height=550)
