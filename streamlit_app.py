@@ -3,7 +3,6 @@ import folium
 from streamlit_folium import st_folium
 from geopy.geocoders import Nominatim
 from geopy.distance import geodesic
-from geopy.exc import GeocoderUnavailable, GeocoderTimedOut, GeocoderServiceError
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from npi_chatbot_sql import bedrock_agent
@@ -47,18 +46,49 @@ def local_timestamp():
 
 @st.cache_data(show_spinner=False)
 def geocode_address(address):
+    if not address or not str(address).strip():
+        return None, None
+
+    address = str(address).strip()
+
+    # Built-in fallback first, so common locations still work even if Nominatim fails
+    fallback_locations = {
+        "baltimore": (39.2904, -76.6122),
+        "baltimore md": (39.2904, -76.6122),
+        "baltimore, md": (39.2904, -76.6122),
+        "baltimore maryland": (39.2904, -76.6122),
+        "maryland": (39.0458, -76.6413),
+        "washington dc": (38.9072, -77.0369),
+        "washington, dc": (38.9072, -77.0369),
+        "new york": (40.7128, -74.0060),
+        "new york ny": (40.7128, -74.0060),
+        "new york, ny": (40.7128, -74.0060)
+    }
+
+    key = (
+        address.lower()
+        .replace("usa", "")
+        .replace("united states", "")
+        .replace(".", "")
+        .strip()
+    )
+
+    key_no_comma = key.replace(",", " ")
+    key_no_comma = " ".join(key_no_comma.split())
+
+    if key in fallback_locations:
+        return fallback_locations[key]
+
+    if key_no_comma in fallback_locations:
+        return fallback_locations[key_no_comma]
+
+    # Try Nominatim after fallback
     try:
-        if not address or not str(address).strip():
-            return None, None
-
-        address = str(address).strip()
-
         geolocator = Nominatim(
             user_agent="npi_healthcare_agent_soroush",
             timeout=15
         )
 
-        # Try exact address first
         location = geolocator.geocode(
             address,
             exactly_one=True,
@@ -68,47 +98,6 @@ def geocode_address(address):
         if location:
             return location.latitude, location.longitude
 
-        # Fallback: try city/state from address
-        if "," in address:
-            parts = [p.strip() for p in address.split(",") if p.strip()]
-
-            if len(parts) >= 2:
-                fallback_address = ", ".join(parts[-2:])
-
-                location = geolocator.geocode(
-                    fallback_address,
-                    exactly_one=True,
-                    country_codes="us"
-                )
-
-                if location:
-                    return location.latitude, location.longitude
-
-        # Final fallback for common locations
-        fallback_locations = {
-            "baltimore": (39.2904, -76.6122),
-            "baltimore md": (39.2904, -76.6122),
-            "baltimore, md": (39.2904, -76.6122),
-            "maryland": (39.0458, -76.6413),
-            "washington dc": (38.9072, -77.0369),
-            "washington, dc": (38.9072, -77.0369),
-            "new york": (40.7128, -74.0060),
-            "new york, ny": (40.7128, -74.0060)
-        }
-
-        key = (
-            address.lower()
-            .replace("usa", "")
-            .replace("united states", "")
-            .replace(",", " ")
-            .strip()
-        )
-
-        key = " ".join(key.split())
-
-        return fallback_locations.get(key, (None, None))
-
-    except (GeocoderUnavailable, GeocoderTimedOut, GeocoderServiceError):
         return None, None
 
     except Exception:
@@ -161,7 +150,7 @@ def create_provider_map(user_address, providers):
         )
         return []
 
-    m = folium.Map(location=[user_lat, user_lon], zoom_start=9)
+    m = folium.Map(location=[user_lat, user_lon], zoom_start=10)
 
     folium.Marker(
         [user_lat, user_lon],
@@ -172,7 +161,7 @@ def create_provider_map(user_address, providers):
 
     results = []
 
-    # Limit to first 8 to avoid geocoder rate limits
+    # Limit to first 8 provider results to reduce geocoder failures
     for provider in providers[:8]:
         provider_address = provider.get("address")
 
