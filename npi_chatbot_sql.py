@@ -1,10 +1,13 @@
 import os
 import re
+import json
 import boto3
 import sqlite3
 import pandas as pd
 import streamlit as st
-import json
+
+
+DB_FILE = "npi.db"
 
 
 def get_secret(key, default=None):
@@ -18,13 +21,8 @@ def get_secret(key, default=None):
         st.stop()
 
 
-DB_FILE = "npi.db"
-
 AWS_REGION = get_secret("AWS_REGION", "us-east-2")
-BEDROCK_MODEL_ID = get_secret(
-    "BEDROCK_MODEL_ID",
-    "us.amazon.nova-lite-v1:0"
-)
+BEDROCK_MODEL_ID = get_secret("BEDROCK_MODEL_ID", "us.amazon.nova-lite-v1:0")
 
 
 def db_has_required_tables():
@@ -33,6 +31,7 @@ def db_has_required_tables():
 
     try:
         conn = sqlite3.connect(DB_FILE)
+
         tables = pd.read_sql_query(
             "SELECT name FROM sqlite_master WHERE type='table';",
             conn
@@ -144,112 +143,103 @@ def normalize_specialty(s):
     s = s.lower().strip()
 
     aliases = {
+        "oncology": "oncology",
+        "oncologist": "oncology",
+        "oncologists": "oncology",
+        "medical oncologist": "oncology",
+        "medical oncologists": "oncology",
+        "cancer doctor": "oncology",
+        "cancer doctors": "oncology",
+        "cancer specialist": "oncology",
+        "cancer specialists": "oncology",
+        "cancer physician": "oncology",
+        "tumor doctor": "oncology",
 
-    # Oncology
-    "oncology": "oncology",
-    "oncologist": "oncology",
-    "oncologists": "oncology",
-    "medical oncologist": "oncology",
-    "medical oncologists": "oncology",
-    "cancer doctor": "oncology",
-    "cancer doctors": "oncology",
-    "cancer specialist": "oncology",
-    "cancer specialists": "oncology",
-    "cancer physician": "oncology",
-    "tumor doctor": "oncology",
+        "cardiology": "cardiovascular disease",
+        "cardiologist": "cardiovascular disease",
+        "cardiologists": "cardiovascular disease",
+        "heart doctor": "cardiovascular disease",
+        "heart doctors": "cardiovascular disease",
+        "heart specialist": "cardiovascular disease",
+        "heart failure specialist": "cardiovascular disease",
 
-    # Cardiology (map to actual taxonomy language)
-    "cardiology": "cardiovascular disease",
-    "cardiologist": "cardiovascular disease",
-    "cardiologists": "cardiovascular disease",
-    "heart doctor": "cardiovascular disease",
-    "heart doctors": "cardiovascular disease",
-    "heart specialist": "cardiovascular disease",
-    "heart failure specialist": "cardiovascular disease",
+        "primary care": "internal medicine",
+        "primary care doctor": "internal medicine",
+        "internist": "internal medicine",
+        "internal medicine": "internal medicine",
 
-    # Primary Care / Internal Medicine
-    "primary care": "internal medicine",
-    "primary care doctor": "internal medicine",
-    "internist": "internal medicine",
-    "internal medicine": "internal medicine",
+        "pediatrician": "pediatrics",
+        "pediatricians": "pediatrics",
+        "children doctor": "pediatrics",
+        "kids doctor": "pediatrics",
+        "pediatrics": "pediatrics",
 
-    # Pediatrics
-    "pediatrician": "pediatrics",
-    "pediatricians": "pediatrics",
-    "children doctor": "pediatrics",
-    "kids doctor": "pediatrics",
-    "pediatrics": "pediatrics",
+        "skin doctor": "dermatology",
+        "skin specialist": "dermatology",
+        "dermatologist": "dermatology",
+        "dermatologists": "dermatology",
+        "dermatology": "dermatology",
 
-    # Dermatology
-    "skin doctor": "dermatology",
-    "skin specialist": "dermatology",
-    "dermatologist": "dermatology",
-    "dermatologists": "dermatology",
-    "dermatology": "dermatology",
+        "brain doctor": "neurology",
+        "neurologist": "neurology",
+        "neurologists": "neurology",
+        "neurology": "neurology",
 
-    # Neurology
-    "brain doctor": "neurology",
-    "neurologist": "neurology",
-    "neurologists": "neurology",
-    "neurology": "neurology",
+        "bone doctor": "orthopaedic surgery",
+        "orthopedic": "orthopaedic surgery",
+        "orthopedic surgeon": "orthopaedic surgery",
+        "orthopedics": "orthopaedic surgery",
+        "orthopaedic": "orthopaedic surgery",
+        "orthopaedic surgeon": "orthopaedic surgery",
 
-    # Orthopedics
-    "bone doctor": "orthopaedic surgery",
-    "orthopedic": "orthopaedic surgery",
-    "orthopedic surgeon": "orthopaedic surgery",
-    "orthopedics": "orthopaedic surgery",
+        "kidney doctor": "nephrology",
+        "kidney specialist": "nephrology",
+        "nephrologist": "nephrology",
+        "nephrology": "nephrology",
 
-    # Nephrology
-    "kidney doctor": "nephrology",
-    "kidney specialist": "nephrology",
-    "nephrologist": "nephrology",
-    "nephrology": "nephrology",
+        "lung doctor": "pulmonary disease",
+        "pulmonologist": "pulmonary disease",
+        "pulmonary": "pulmonary disease",
 
-    # Pulmonary
-    "lung doctor": "pulmonary disease",
-    "pulmonologist": "pulmonary disease",
-    "pulmonary": "pulmonary disease",
+        "diabetes doctor": "endocrinology",
+        "hormone specialist": "endocrinology",
+        "endocrinologist": "endocrinology",
+        "endocrinology": "endocrinology",
 
-    # Endocrinology
-    "diabetes doctor": "endocrinology",
-    "hormone specialist": "endocrinology",
-    "endocrinologist": "endocrinology",
-    "endocrinology": "endocrinology",
+        "psychiatrist": "psychiatry",
+        "mental health doctor": "psychiatry",
+        "psych doctor": "psychiatry",
 
-    # Psychiatry / Mental Health
-    "psychiatrist": "psychiatry",
-    "mental health doctor": "psychiatry",
-    "psych doctor": "psychiatry",
+        "psychologist": "psychologist",
+        "therapist": "psychologist",
 
-    # Psychology
-    "psychologist": "psychologist",
-    "therapist": "psychologist",
+        "obgyn": "obstetrics & gynecology",
+        "ob-gyn": "obstetrics & gynecology",
+        "gynecologist": "obstetrics & gynecology",
+        "women's doctor": "obstetrics & gynecology",
 
-    # OBGYN
-    "obgyn": "obstetrics & gynecology",
-    "gynecologist": "obstetrics & gynecology",
-    "women's doctor": "obstetrics & gynecology",
+        "dentist": "dentist",
+        "teeth doctor": "dentist",
 
-    # Dentistry
-    "dentist": "dentist",
-    "teeth doctor": "dentist",
+        "nurse practitioner": "nurse practitioner",
+        "np": "nurse practitioner",
+        "physician assistant": "physician assistant",
+        "pa": "physician assistant"
+    }
 
-    # NP / APP
-    "nurse practitioner": "nurse practitioner",
-    "np": "nurse practitioner",
-    "physician assistant": "physician assistant",
-    "pa": "physician assistant"
-}
-    mapped = aliases.get(s, s)
+    return aliases.get(s, s)
 
-# fallback: if alias not found, use original text
-return mapped
 
 def normalize_state(state):
     if not state:
         return state
 
-    state = state.strip().lower()
+    state = state.strip()
+
+    if len(state) == 2:
+        return state.upper()
+
+    state_lower = state.lower()
 
     state_map = {
         "new jersey": "NJ",
@@ -261,13 +251,12 @@ def normalize_state(state):
         "virginia": "VA",
         "district of columbia": "DC",
         "washington dc": "DC",
+        "washington, dc": "DC",
         "dc": "DC"
     }
 
-    if len(state) == 2:
-        return normalize_state(state)
+    return state_map.get(state_lower, state.upper())
 
-    return state_map.get(state, normalize_state(state))
 
 def find_provider_by_npi(npi):
     sql = """
@@ -304,22 +293,10 @@ def search_taxonomy_codes(keyword, limit=100):
     LIMIT ?
     """
 
-    try:
-        return run_query(sql, [f"%{keyword.lower()}%", limit])
-    except Exception as e:
-        return pd.DataFrame([{
-            "error": "taxonomy_lookup query failed",
-            "details": str(e)
-        }])
+    return run_query(sql, [f"%{keyword.lower()}%", limit])
 
 
-def search_providers(
-    last_name=None,
-    state=None,
-    city=None,
-    specialty=None,
-    limit=20
-):
+def search_providers(last_name=None, state=None, city=None, specialty=None, limit=20):
     sql = """
     SELECT
         NPI,
@@ -353,33 +330,25 @@ def search_providers(
         specialty = normalize_specialty(specialty)
         taxonomy_matches = search_taxonomy_codes(specialty, limit=200)
 
-        if not taxonomy_matches.empty and "Code" in taxonomy_matches.columns:
-            codes = (
-                taxonomy_matches["Code"]
-                .dropna()
-                .astype(str)
-                .unique()
-                .tolist()
-            )
-
-            if codes:
-                taxonomy_conditions = []
-
-                for i in range(1, 16):
-                    col = f"Healthcare Provider Taxonomy Code_{i}"
-                    placeholders = ",".join(["?"] * len(codes))
-                    taxonomy_conditions.append(
-                        f'"{col}" IN ({placeholders})'
-                    )
-
-                sql += " AND (" + " OR ".join(taxonomy_conditions) + ")"
-
-                for _ in range(15):
-                    params.extend(codes)
-            else:
-                return pd.DataFrame()
-        else:
+        if taxonomy_matches.empty or "Code" not in taxonomy_matches.columns:
             return pd.DataFrame()
+
+        codes = taxonomy_matches["Code"].dropna().astype(str).unique().tolist()
+
+        if not codes:
+            return pd.DataFrame()
+
+        taxonomy_conditions = []
+
+        for i in range(1, 16):
+            col = f"Healthcare Provider Taxonomy Code_{i}"
+            placeholders = ",".join(["?"] * len(codes))
+            taxonomy_conditions.append(f'"{col}" IN ({placeholders})')
+
+        sql += " AND (" + " OR ".join(taxonomy_conditions) + ")"
+
+        for _ in range(15):
+            params.extend(codes)
 
     sql += " LIMIT ?"
     params.append(limit)
@@ -399,6 +368,7 @@ def count_providers_by_state(limit=20):
     """
 
     return run_query(sql, [limit])
+
 
 def count_providers_by_city(state=None, specialty=None, limit=20):
     sql = """
@@ -428,6 +398,7 @@ def count_providers_by_city(state=None, specialty=None, limit=20):
             return pd.DataFrame()
 
         taxonomy_conditions = []
+
         for i in range(1, 16):
             col = f"Healthcare Provider Taxonomy Code_{i}"
             placeholders = ",".join(["?"] * len(codes))
@@ -496,10 +467,11 @@ def compare_specialty_between_states(specialty, states, limit=50):
     if not codes:
         return pd.DataFrame()
 
+    states = [normalize_state(s) for s in states]
     state_placeholders = ",".join(["?"] * len(states))
 
     taxonomy_conditions = []
-    params = [s.upper() for s in states]
+    params = states.copy()
 
     for i in range(1, 16):
         col = f"Healthcare Provider Taxonomy Code_{i}"
@@ -550,7 +522,8 @@ def provider_type_breakdown(state=None, city=None):
     """
 
     return run_query(sql, params)
-    
+
+
 def df_to_json_records(result_df, max_rows=5):
     if result_df is None or result_df.empty:
         return {
@@ -584,8 +557,8 @@ def format_tool_result(tool_name, tool_result):
                 row.get("Provider First Name"),
                 row.get("Provider Last Name (Legal Name)")
             ]
-            name = " ".join([x for x in name_parts if x])
 
+            name = " ".join([x for x in name_parts if x])
             org = row.get("Provider Organization Name (Legal Business Name)")
             city = row.get("City")
             state = row.get("State")
@@ -631,7 +604,14 @@ def format_tool_result(tool_name, tool_result):
 
         elif tool_name == "provider_type_breakdown":
             entity = row.get("Entity_Type_Code")
-            label = "Individual Provider" if str(entity) == "1" else "Organization Provider" if str(entity) == "2" else "Unknown"
+            label = (
+                "Individual Provider"
+                if str(entity) == "1"
+                else "Organization Provider"
+                if str(entity) == "2"
+                else "Unknown"
+            )
+
             lines.append(
                 f"- {label} Entity Type {entity}: {row.get('Provider_Count')}"
             )
@@ -665,7 +645,7 @@ tool_config = {
         {
             "toolSpec": {
                 "name": "search_taxonomy_codes",
-                "description": "Search the full NUCC healthcare taxonomy table by specialty, provider type, classification, specialization, or display name.",
+                "description": "Search the NUCC healthcare taxonomy table by specialty, provider type, classification, specialization, or display name.",
                 "inputSchema": {
                     "json": {
                         "type": "object",
@@ -706,7 +686,7 @@ tool_config = {
                             },
                             "specialty": {
                                 "type": "string",
-                                "description": "Healthcare specialty or taxonomy keyword such as oncology, cardiology, dermatology, pediatrics, internal medicine, nurse practitioner, clinic, dentist, or psychologist"
+                                "description": "Healthcare specialty or taxonomy keyword"
                             },
                             "limit": {
                                 "type": "integer",
@@ -734,105 +714,104 @@ tool_config = {
                 }
             }
         },
-
         {
-    "toolSpec": {
-        "name": "count_providers_by_city",
-        "description": "Count providers grouped by city, optionally filtered by state and specialty.",
-        "inputSchema": {
-            "json": {
-                "type": "object",
-                "properties": {
-                    "state": {
-                        "type": "string",
-                        "description": "Two-letter state abbreviation such as MD, NY, CA"
-                    },
-                    "specialty": {
-                        "type": "string",
-                        "description": "Healthcare specialty such as oncology, cardiology, pediatrics, or dermatology"
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "description": "Maximum number of cities to return"
+            "toolSpec": {
+                "name": "count_providers_by_city",
+                "description": "Count providers grouped by city, optionally filtered by state and specialty.",
+                "inputSchema": {
+                    "json": {
+                        "type": "object",
+                        "properties": {
+                            "state": {
+                                "type": "string",
+                                "description": "Two-letter state abbreviation such as MD, NY, CA"
+                            },
+                            "specialty": {
+                                "type": "string",
+                                "description": "Healthcare specialty such as oncology, cardiology, pediatrics, or dermatology"
+                            },
+                            "limit": {
+                                "type": "integer",
+                                "description": "Maximum number of cities to return"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        {
+            "toolSpec": {
+                "name": "count_providers_by_taxonomy",
+                "description": "Count providers grouped by taxonomy code, optionally filtered by state and city.",
+                "inputSchema": {
+                    "json": {
+                        "type": "object",
+                        "properties": {
+                            "state": {
+                                "type": "string",
+                                "description": "Two-letter state abbreviation"
+                            },
+                            "city": {
+                                "type": "string",
+                                "description": "City name"
+                            },
+                            "limit": {
+                                "type": "integer",
+                                "description": "Maximum number of taxonomy groups to return"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        {
+            "toolSpec": {
+                "name": "compare_specialty_between_states",
+                "description": "Compare the number of providers for a specialty across multiple states.",
+                "inputSchema": {
+                    "json": {
+                        "type": "object",
+                        "properties": {
+                            "specialty": {
+                                "type": "string",
+                                "description": "Specialty such as oncology, cardiology, dermatology, or pediatrics"
+                            },
+                            "states": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "List of two-letter state abbreviations"
+                            },
+                            "limit": {
+                                "type": "integer",
+                                "description": "Maximum number of rows to return"
+                            }
+                        },
+                        "required": ["specialty", "states"]
+                    }
+                }
+            }
+        },
+        {
+            "toolSpec": {
+                "name": "provider_type_breakdown",
+                "description": "Break providers into individual providers versus organization providers using Entity Type Code.",
+                "inputSchema": {
+                    "json": {
+                        "type": "object",
+                        "properties": {
+                            "state": {
+                                "type": "string",
+                                "description": "Two-letter state abbreviation"
+                            },
+                            "city": {
+                                "type": "string",
+                                "description": "City name"
+                            }
+                        }
                     }
                 }
             }
         }
-    }
-},
-{
-    "toolSpec": {
-        "name": "count_providers_by_taxonomy",
-        "description": "Count providers grouped by taxonomy code, optionally filtered by state and city.",
-        "inputSchema": {
-            "json": {
-                "type": "object",
-                "properties": {
-                    "state": {
-                        "type": "string",
-                        "description": "Two-letter state abbreviation"
-                    },
-                    "city": {
-                        "type": "string",
-                        "description": "City name"
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "description": "Maximum number of taxonomy groups to return"
-                    }
-                }
-            }
-        }
-    }
-},
-{
-    "toolSpec": {
-        "name": "compare_specialty_between_states",
-        "description": "Compare the number of providers for a specialty across multiple states.",
-        "inputSchema": {
-            "json": {
-                "type": "object",
-                "properties": {
-                    "specialty": {
-                        "type": "string",
-                        "description": "Specialty such as oncology, cardiology, dermatology, or pediatrics"
-                    },
-                    "states": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "List of two-letter state abbreviations"
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "description": "Maximum number of rows to return"
-                    }
-                },
-                "required": ["specialty", "states"]
-            }
-        }
-    }
-},
-{
-    "toolSpec": {
-        "name": "provider_type_breakdown",
-        "description": "Break providers into individual providers versus organization providers using Entity Type Code.",
-        "inputSchema": {
-            "json": {
-                "type": "object",
-                "properties": {
-                    "state": {
-                        "type": "string",
-                        "description": "Two-letter state abbreviation"
-                    },
-                    "city": {
-                        "type": "string",
-                        "description": "City name"
-                    }
-                }
-            }
-        }
-    }
-}
     ]
 }
 
@@ -865,7 +844,6 @@ def execute_tool(tool_name, tool_input):
         )
         return df_to_json_records(result, max_rows=5)
 
-
     if tool_name == "count_providers_by_city":
         result = count_providers_by_city(
             state=tool_input.get("state"),
@@ -896,10 +874,12 @@ def execute_tool(tool_name, tool_input):
             city=tool_input.get("city")
         )
         return df_to_json_records(result, max_rows=10)
-        
-      return {
-            "error": f"Unknown tool: {tool_name}"
-        }
+
+    return {
+        "rows": [],
+        "message": f"Unknown tool: {tool_name}"
+    }
+
 
 def bedrock_agent(question):
     messages = [
@@ -948,22 +928,21 @@ User question:
 
     output_message = response["output"]["message"]
 
-    for content_block in output_message["content"]:
+    for content_block in output_message.get("content", []):
         if "toolUse" in content_block:
             tool_use = content_block["toolUse"]
             tool_name = tool_use["name"]
-            tool_input = tool_use["input"]
+            tool_input = tool_use.get("input", {})
 
             tool_result = execute_tool(tool_name, tool_input)
 
             return format_tool_result(tool_name, tool_result)
 
-    text = output_message["content"][0].get(
-        "text",
-        "No response generated."
-    )
+    if output_message.get("content"):
+        text = output_message["content"][0].get("text", "No response generated.")
+        return strip_thinking(text)
 
-    return strip_thinking(text)
+    return "No response generated."
 
 
 if __name__ == "__main__":
