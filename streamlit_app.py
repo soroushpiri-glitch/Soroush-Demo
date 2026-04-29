@@ -62,7 +62,7 @@ if clear_button:
 
 if ask_button and question.strip():
     with st.spinner("Searching NPI data..."):
-        answer = bedrock_agent(question)
+        answer = bedrock_agent(     question,     history=st.session_state.chat_history )
 
     ts = local_timestamp()
 
