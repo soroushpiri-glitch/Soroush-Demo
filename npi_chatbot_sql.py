@@ -296,10 +296,19 @@ def search_taxonomy_codes(keyword, limit=100):
     return run_query(sql, [f"%{keyword.lower()}%", limit])
 
 
-def search_providers(last_name=None, state=None, city=None, specialty=None, limit=20):
+def search_providers(
+    last_name=None,
+    state=None,
+    city=None,
+    specialty=None,
+    taxonomy_code=None,
+    entity_type=None,
+    limit=20
+):
     sql = """
     SELECT
         NPI,
+        "Entity Type Code" AS Entity_Type_Code,
         "Provider First Name",
         "Provider Last Name (Legal Name)",
         "Provider Organization Name (Legal Business Name)",
@@ -326,7 +335,28 @@ def search_providers(last_name=None, state=None, city=None, specialty=None, limi
         sql += ' AND "Provider Business Practice Location Address City Name" LIKE ?'
         params.append(f"%{city}%")
 
-    if specialty:
+    if entity_type:
+        if entity_type.lower() in ["individual", "individuals", "person", "people"]:
+            sql += ' AND "Entity Type Code" = ?'
+            params.append(1)
+
+        elif entity_type.lower() in ["organization", "organizations", "company", "companies"]:
+            sql += ' AND "Entity Type Code" = ?'
+            params.append(2)
+
+    if taxonomy_code:
+        taxonomy_conditions = []
+
+        for i in range(1, 16):
+            col = f"Healthcare Provider Taxonomy Code_{i}"
+            taxonomy_conditions.append(f'"{col}" = ?')
+
+        sql += " AND (" + " OR ".join(taxonomy_conditions) + ")"
+
+        for _ in range(15):
+            params.append(taxonomy_code)
+
+    elif specialty:
         specialty = normalize_specialty(specialty)
         taxonomy_matches = search_taxonomy_codes(specialty, limit=200)
 
@@ -354,7 +384,6 @@ def search_providers(last_name=None, state=None, city=None, specialty=None, limi
     params.append(limit)
 
     return run_query(sql, params)
-
 
 def count_providers_by_state(limit=20):
     sql = """
@@ -688,6 +717,14 @@ tool_config = {
                                 "type": "string",
                                 "description": "Healthcare specialty or taxonomy keyword"
                             },
+                            "taxonomy_code": {
+                                "type": "string",
+                                "description": "Exact taxonomy code such as 207RH0003X"
+                            },
+                            "entity_type": {
+                                "type": "string",
+                                "description": "Use individual or organization"
+                            },
                             "limit": {
                                 "type": "integer",
                                 "description": "Maximum number of provider records to return"
@@ -829,14 +866,16 @@ def execute_tool(tool_name, tool_input):
         return df_to_json_records(result, max_rows=5)
 
     if tool_name == "search_providers":
-        result = search_providers(
-            last_name=tool_input.get("last_name"),
-            state=tool_input.get("state"),
-            city=tool_input.get("city"),
-            specialty=tool_input.get("specialty"),
-            limit=tool_input.get("limit", 20)
-        )
-        return df_to_json_records(result, max_rows=5)
+    result = search_providers(
+        last_name=tool_input.get("last_name"),
+        state=tool_input.get("state"),
+        city=tool_input.get("city"),
+        specialty=tool_input.get("specialty"),
+        taxonomy_code=tool_input.get("taxonomy_code"),
+        entity_type=tool_input.get("entity_type"),
+        limit=tool_input.get("limit", 20)
+    )
+        return df_to_json_records(result, max_rows=20)
 
     if tool_name == "count_providers_by_state":
         result = count_providers_by_state(
