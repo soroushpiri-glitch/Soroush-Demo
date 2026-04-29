@@ -107,6 +107,7 @@ def geocode_address(address):
 
         if location:
             return location.latitude, location.longitude
+
     except Exception:
         pass
 
@@ -124,6 +125,7 @@ def geocode_address(address):
 
         if location:
             return location.latitude, location.longitude
+
     except Exception:
         pass
 
@@ -200,6 +202,13 @@ def build_provider_map(user_address, providers):
             "Distance (miles)": round(distance, 2)
         })
 
+        directions_url = (
+            "https://www.google.com/maps/dir/?api=1"
+            f"&origin={user_lat},{user_lon}"
+            f"&destination={lat},{lon}"
+            "&travelmode=driving"
+        )
+
         popup_text = f"""
         <b>{provider.get("name")}</b><br>
         {provider.get("entity")}<br>
@@ -207,6 +216,10 @@ def build_provider_map(user_address, providers):
         Address: {cleaned_provider_address}<br>
         Taxonomy: {provider.get("taxonomy")}<br>
         Distance: {round(distance, 2)} miles
+        <br><br>
+        <a href="{directions_url}" target="_blank">
+        🚗 Get Directions
+        </a>
         """
 
         folium.Marker(
