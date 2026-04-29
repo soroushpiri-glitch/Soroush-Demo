@@ -3,6 +3,7 @@ import folium
 from streamlit_folium import st_folium
 from geopy.geocoders import Nominatim
 from geopy.distance import geodesic
+from geopy.exc import GeocoderUnavailable, GeocoderTimedOut, GeocoderServiceError
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from npi_chatbot_sql import bedrock_agent
@@ -46,13 +47,30 @@ def local_timestamp():
 
 @st.cache_data(show_spinner=False)
 def geocode_address(address):
-    geolocator = Nominatim(user_agent="npi_healthcare_agent")
-    location = geolocator.geocode(address)
+    try:
+        if not address or not str(address).strip():
+            return None, None
 
-    if location:
-        return location.latitude, location.longitude
+        geolocator = Nominatim(
+            user_agent="npi_healthcare_agent_soroush",
+            timeout=10
+        )
 
-    return None, None
+        location = geolocator.geocode(
+            str(address),
+            country_codes="us"
+        )
+
+        if location:
+            return location.latitude, location.longitude
+
+        return None, None
+
+    except (GeocoderUnavailable, GeocoderTimedOut, GeocoderServiceError):
+        return None, None
+
+    except Exception:
+        return None, None
 
 
 def parse_provider_lines(answer):
@@ -95,7 +113,10 @@ def create_provider_map(user_address, providers):
     user_lat, user_lon = geocode_address(user_address)
 
     if user_lat is None:
-        st.error("Could not find your location. Try using a full address or ZIP code.")
+        st.error(
+            "Could not find your location. Try a fuller format, for example: "
+            "`2907 Fallstaff Road, Baltimore, MD, USA` or `Baltimore, MD`."
+        )
         return []
 
     m = folium.Map(location=[user_lat, user_lon], zoom_start=9)
@@ -221,7 +242,7 @@ st.subheader("Provider Map")
 
 user_address = st.text_input(
     "Enter your address, city, or ZIP code:",
-    placeholder="Example: Baltimore, MD or 21218"
+    placeholder="Example: 2907 Fallstaff Road, Baltimore, MD, USA"
 )
 
 map_button = st.button("Show Map for Latest Provider Results")
@@ -245,4 +266,6 @@ if map_button:
                 mapped_results = create_provider_map(user_address, providers)
 
             if not mapped_results:
-                st.warning("Could not geocode provider addresses.")
+                st.warning(
+                    "Could not geocode provider addresses. Try again later or use a broader location like `Baltimore, MD`."
+                )
