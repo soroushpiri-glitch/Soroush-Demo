@@ -598,43 +598,58 @@ def format_tool_result(tool_name, tool_result):
     for row in rows:
 
         if tool_name in ["search_providers", "find_provider_by_npi"]:
+
             first = row.get("Provider First Name")
             last = row.get("Provider Last Name (Legal Name)")
             org = row.get("Provider Organization Name (Legal Business Name)")
-
+        
             first = "" if first is None else str(first)
             last = "" if last is None else str(last)
             org = "" if org is None else str(org)
-
-            name = " ".join([x for x in [first, last] if x.strip()])
-
+        
+            first = "" if first in ["nan", "None"] else first
+            last  = "" if last in ["nan", "None"] else last
+            org   = "" if org in ["nan", "None"] else org
+        
+            name = " ".join(
+                [x for x in [first, last] if str(x).strip()]
+            )
+        
             city = row.get("City")
             state = row.get("State")
             npi = row.get("NPI")
             tax = row.get("Taxonomy_1")
-
+        
             entity = row.get("Entity_Type_Code")
-
+        
             if str(entity) in ["1", "1.0"]:
                 entity_label = "Individual"
             elif str(entity) in ["2", "2.0"]:
                 entity_label = "Organization"
             else:
                 entity_label = "Unknown"
-
-            display_name = name if name else org if org else "Unknown provider"
-
-            addr1 = row.get("Address_1") or ""
-            addr2 = row.get("Address_2") or ""
-            zip_code = row.get("Zip") or ""
-
+        
+            display_name = name if name else org if org else "Unknown Provider"
+        
+        
+            # clean address fields
+            addr1 = str(row.get("Address_1") or "").replace("nan","").strip()
+            addr2 = str(row.get("Address_2") or "").replace("nan","").strip()
+        
+            zip_code = (
+                str(row.get("Zip") or "")
+                .replace(".0","")
+                .replace("nan","")
+                .strip()
+            )
+        
             full_address = (
                 f"{addr1} {addr2}, {city}, {state} {zip_code}"
-                .replace("  ", " ")
+                .replace("  "," ")
                 .replace(" ,", ",")
                 .strip()
             )
-
+        
             lines.append(
                 f"- {display_name} | {entity_label} | "
                 f"NPI: {npi} | "
