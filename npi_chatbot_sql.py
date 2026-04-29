@@ -259,21 +259,29 @@ def normalize_state(state):
 
 
 def find_provider_by_npi(npi):
-    sql = """
-    SELECT 
-        NPI,
-        "Entity Type Code",
-        "Provider Organization Name (Legal Business Name)",
-        "Provider First Name",
-        "Provider Last Name (Legal Name)",
-        "Provider Business Practice Location Address City Name",
-        "Provider Business Practice Location Address State Name",
-        "Healthcare Provider Taxonomy Code_1",
-        "Certification Date"
-    FROM npi_providers
-    WHERE CAST(NPI AS TEXT) = ?
-    LIMIT 1
-    """
+ sql = """
+ SELECT
+    NPI,
+    "Entity Type Code" AS Entity_Type_Code,
+
+    "Provider First Name",
+    "Provider Last Name (Legal Name)",
+    "Provider Organization Name (Legal Business Name)",
+
+    "Provider First Line Business Practice Location Address" AS Address_1,
+    "Provider Second Line Business Practice Location Address" AS Address_2,
+
+    "Provider Business Practice Location Address City Name" AS City,
+    "Provider Business Practice Location Address State Name" AS State,
+    "Provider Business Practice Location Address Postal Code" AS Zip,
+
+    "Healthcare Provider Taxonomy Code_1" AS Taxonomy_1,
+    "Healthcare Provider Taxonomy Code_2" AS Taxonomy_2,
+    "Healthcare Provider Taxonomy Code_3" AS Taxonomy_3
+
+FROM npi_providers
+WHERE 1=1
+"""
 
     return run_query(sql, [str(npi)])
 
@@ -610,10 +618,25 @@ def format_tool_result(tool_name, tool_result):
                 entity_label = "Unknown"
 
             display_name = name if name else org if org else "Unknown provider"
+            addr1 = row.get("Address_1") or ""
+            addr2 = row.get("Address_2") or ""
+            zip_code = row.get("Zip") or ""
 
-            lines.append(
-                f"- {display_name} | {entity_label} | NPI: {npi} | {city}, {state} | Taxonomy: {tax}"
+            full_address = (
+                f"{addr1} {addr2}, {city}, {state} {zip_code}"
+                .replace("  "," ")
+                .replace(" ,", ",")
+                .strip()
             )
+            
+            lines.append(
+               f"- {display_name} | {entity_label} | "
+               f"NPI: {npi} | "
+               f"{full_address} | "
+               f"Taxonomy: {tax}"
+            )
+
+        
 
         elif tool_name == "search_taxonomy_codes":
             lines.append(
