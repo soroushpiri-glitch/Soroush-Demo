@@ -259,29 +259,28 @@ def normalize_state(state):
 
 
 def find_provider_by_npi(npi):
- sql = """
- SELECT
-    NPI,
-    "Entity Type Code" AS Entity_Type_Code,
+    sql = """
+    SELECT
+        NPI,
+        "Entity Type Code" AS Entity_Type_Code,
+        "Provider First Name",
+        "Provider Last Name (Legal Name)",
+        "Provider Organization Name (Legal Business Name)",
 
-    "Provider First Name",
-    "Provider Last Name (Legal Name)",
-    "Provider Organization Name (Legal Business Name)",
+        "Provider First Line Business Practice Location Address" AS Address_1,
+        "Provider Second Line Business Practice Location Address" AS Address_2,
+        "Provider Business Practice Location Address City Name" AS City,
+        "Provider Business Practice Location Address State Name" AS State,
+        "Provider Business Practice Location Address Postal Code" AS Zip,
 
-    "Provider First Line Business Practice Location Address" AS Address_1,
-    "Provider Second Line Business Practice Location Address" AS Address_2,
-
-    "Provider Business Practice Location Address City Name" AS City,
-    "Provider Business Practice Location Address State Name" AS State,
-    "Provider Business Practice Location Address Postal Code" AS Zip,
-
-    "Healthcare Provider Taxonomy Code_1" AS Taxonomy_1,
-    "Healthcare Provider Taxonomy Code_2" AS Taxonomy_2,
-    "Healthcare Provider Taxonomy Code_3" AS Taxonomy_3
-
-FROM npi_providers
-WHERE 1=1
-"""
+        "Healthcare Provider Taxonomy Code_1" AS Taxonomy_1,
+        "Healthcare Provider Taxonomy Code_2" AS Taxonomy_2,
+        "Healthcare Provider Taxonomy Code_3" AS Taxonomy_3,
+        "Certification Date"
+    FROM npi_providers
+    WHERE CAST(NPI AS TEXT) = ?
+    LIMIT 1
+    """
 
     return run_query(sql, [str(npi)])
 
@@ -320,8 +319,13 @@ def search_providers(
         "Provider First Name",
         "Provider Last Name (Legal Name)",
         "Provider Organization Name (Legal Business Name)",
+
+        "Provider First Line Business Practice Location Address" AS Address_1,
+        "Provider Second Line Business Practice Location Address" AS Address_2,
         "Provider Business Practice Location Address City Name" AS City,
         "Provider Business Practice Location Address State Name" AS State,
+        "Provider Business Practice Location Address Postal Code" AS Zip,
+
         "Healthcare Provider Taxonomy Code_1" AS Taxonomy_1,
         "Healthcare Provider Taxonomy Code_2" AS Taxonomy_2,
         "Healthcare Provider Taxonomy Code_3" AS Taxonomy_3
@@ -394,6 +398,7 @@ def search_providers(
     params.append(limit)
 
     return run_query(sql, params)
+
 
 def count_providers_by_state(limit=20):
     sql = """
@@ -592,7 +597,7 @@ def format_tool_result(tool_name, tool_result):
 
     for row in rows:
 
-        if tool_name == "search_providers":
+        if tool_name in ["search_providers", "find_provider_by_npi"]:
             first = row.get("Provider First Name")
             last = row.get("Provider Last Name (Legal Name)")
             org = row.get("Provider Organization Name (Legal Business Name)")
@@ -618,25 +623,24 @@ def format_tool_result(tool_name, tool_result):
                 entity_label = "Unknown"
 
             display_name = name if name else org if org else "Unknown provider"
+
             addr1 = row.get("Address_1") or ""
             addr2 = row.get("Address_2") or ""
             zip_code = row.get("Zip") or ""
 
             full_address = (
                 f"{addr1} {addr2}, {city}, {state} {zip_code}"
-                .replace("  "," ")
+                .replace("  ", " ")
                 .replace(" ,", ",")
                 .strip()
             )
-            
-            lines.append(
-               f"- {display_name} | {entity_label} | "
-               f"NPI: {npi} | "
-               f"{full_address} | "
-               f"Taxonomy: {tax}"
-            )
 
-        
+            lines.append(
+                f"- {display_name} | {entity_label} | "
+                f"NPI: {npi} | "
+                f"{full_address} | "
+                f"Taxonomy: {tax}"
+            )
 
         elif tool_name == "search_taxonomy_codes":
             lines.append(
@@ -648,9 +652,6 @@ def format_tool_result(tool_name, tool_result):
             lines.append(
                 f"- {row.get('State')}: {row.get('Provider_Count')}"
             )
-
-        elif tool_name == "find_provider_by_npi":
-            lines.append(str(row))
 
         elif tool_name == "count_providers_by_city":
             lines.append(
@@ -687,6 +688,7 @@ def format_tool_result(tool_name, tool_result):
             lines.append(str(row))
 
     return "\n".join(lines)
+
 
 tool_config = {
     "tools": [
@@ -733,7 +735,7 @@ tool_config = {
         {
             "toolSpec": {
                 "name": "search_providers",
-                "description": "Search healthcare providers by last name, state, city, specialty, or taxonomy-related keyword.",
+                "description": "Search healthcare providers by last name, state, city, specialty, taxonomy code, or entity type.",
                 "inputSchema": {
                     "json": {
                         "type": "object",
@@ -955,7 +957,8 @@ def execute_tool(tool_name, tool_input):
         "rows": [],
         "message": f"Unknown tool: {tool_name}"
     }
-    
+
+
 def bedrock_agent(question, history=None):
     context_text = ""
 
@@ -990,25 +993,13 @@ You have access to previous conversation history. Use it to understand follow-up
 
 Before using a tool, silently rewrite the user's latest question into a complete standalone question using the previous conversation context.
 
-Example:
-Previous question: Find oncologists in Maryland
-Previous answer: Found providers in Maryland.
-Latest question: Show only those in Baltimore
-Standalone meaning: Find oncologists in Baltimore, Maryland.
-
-Example:
-Previous question: Find oncologists in Maryland
-Previous answer: Found providers with taxonomy 207RH0003X.
-Latest question: Which of those have taxonomy 207RH0003X only?
-Standalone meaning: Find Maryland oncologists with taxonomy 207RH0003X only.
-
 Important rules:
 - Do not make up provider information.
 - If the user asks about provider data, always use a tool.
 - If the user asks about a specialty, use taxonomy-aware tools.
 - If the user asks for comparison, use comparison or count tools.
 - If the user asks for top cities, provider density, distribution, or rankings, use count tools.
-- If the user asks about individual vs organization providers, use provider_type_breakdown.
+- If the user asks about individual vs organization providers, use provider_type_breakdown or search_providers with entity_type.
 - If the user asks about taxonomy categories, use search_taxonomy_codes or count_providers_by_taxonomy.
 - Convert state names to two-letter abbreviations when using tools.
 - Keep answers concise and plain English.
