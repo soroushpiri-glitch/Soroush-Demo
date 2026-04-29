@@ -1,7 +1,7 @@
 import streamlit as st
 import folium
 from streamlit_folium import st_folium
-from geopy.geocoders import Nominatim
+from geopy.geocoders import Nominatim, ArcGIS
 from geopy.distance import geodesic
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -44,6 +44,35 @@ def local_timestamp():
     }
 
 
+def clean_address_for_geocoding(address):
+    if not address:
+        return ""
+
+    address = str(address).strip()
+
+    parts = address.split()
+    cleaned_parts = []
+
+    for part in parts:
+        clean_part = part.strip().replace(",", "")
+
+        if clean_part.isdigit() and len(clean_part) > 5:
+            cleaned_parts.append(clean_part[:5])
+        else:
+            cleaned_parts.append(part)
+
+    cleaned_address = " ".join(cleaned_parts)
+
+    cleaned_address = (
+        cleaned_address
+        .replace("  ", " ")
+        .replace(" ,", ",")
+        .strip()
+    )
+
+    return cleaned_address
+
+
 @st.cache_data(show_spinner=False)
 def geocode_address(address):
     if not address or not str(address).strip():
@@ -51,7 +80,6 @@ def geocode_address(address):
 
     address = str(address).strip()
 
-    # Built-in fallback first, so common locations still work even if Nominatim fails
     fallback_locations = {
         "baltimore": (39.2904, -76.6122),
         "baltimore md": (39.2904, -76.6122),
@@ -82,15 +110,28 @@ def geocode_address(address):
     if key_no_comma in fallback_locations:
         return fallback_locations[key_no_comma]
 
-    # Try Nominatim after fallback
+    cleaned_address = clean_address_for_geocoding(address)
+
+    # Try ArcGIS first
     try:
-        geolocator = Nominatim(
+        arcgis = ArcGIS(timeout=10)
+        location = arcgis.geocode(cleaned_address)
+
+        if location:
+            return location.latitude, location.longitude
+
+    except Exception:
+        pass
+
+    # Try Nominatim second
+    try:
+        nominatim = Nominatim(
             user_agent="npi_healthcare_agent_soroush",
             timeout=15
         )
 
-        location = geolocator.geocode(
-            address,
+        location = nominatim.geocode(
+            cleaned_address,
             exactly_one=True,
             country_codes="us"
         )
@@ -98,10 +139,10 @@ def geocode_address(address):
         if location:
             return location.latitude, location.longitude
 
-        return None, None
-
     except Exception:
-        return None, None
+        pass
+
+    return None, None
 
 
 def parse_provider_lines(answer):
@@ -161,14 +202,14 @@ def create_provider_map(user_address, providers):
 
     results = []
 
-    # Limit to first 8 provider results to reduce geocoder failures
     for provider in providers[:8]:
         provider_address = provider.get("address")
 
         if not provider_address:
             continue
 
-        lat, lon = geocode_address(provider_address)
+        cleaned_provider_address = clean_address_for_geocoding(provider_address)
+        lat, lon = geocode_address(cleaned_provider_address)
 
         if lat is None:
             continue
@@ -179,7 +220,7 @@ def create_provider_map(user_address, providers):
             "Name": provider.get("name"),
             "Entity": provider.get("entity"),
             "NPI": provider.get("npi"),
-            "Address": provider_address,
+            "Address": cleaned_provider_address,
             "Taxonomy": provider.get("taxonomy"),
             "Distance (miles)": round(distance, 2)
         }
@@ -190,7 +231,7 @@ def create_provider_map(user_address, providers):
         <b>{provider.get("name")}</b><br>
         {provider.get("entity")}<br>
         NPI: {provider.get("npi")}<br>
-        Address: {provider_address}<br>
+        Address: {cleaned_provider_address}<br>
         Taxonomy: {provider.get("taxonomy")}<br>
         Distance: {round(distance, 2)} miles
         """
