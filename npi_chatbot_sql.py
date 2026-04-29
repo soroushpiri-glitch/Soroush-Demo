@@ -144,22 +144,130 @@ def normalize_specialty(s):
     s = s.lower().strip()
 
     aliases = {
-        "oncologists": "oncology",
-        "oncologist": "oncology",
-        "cancer doctor": "oncology",
-        "cancer doctors": "oncology",
-        "cancer specialist": "oncology",
-        "cancer specialists": "oncology",
-        "medical oncologist": "oncology",
-        "medical oncologists": "oncology",
-        "heart doctor": "cardiology",
-        "heart doctors": "cardiology",
-        "cardiologist": "cardiology",
-        "cardiologists": "cardiology",
+
+    # Oncology
+    "oncology": "oncology",
+    "oncologist": "oncology",
+    "oncologists": "oncology",
+    "medical oncologist": "oncology",
+    "medical oncologists": "oncology",
+    "cancer doctor": "oncology",
+    "cancer doctors": "oncology",
+    "cancer specialist": "oncology",
+    "cancer specialists": "oncology",
+    "cancer physician": "oncology",
+    "tumor doctor": "oncology",
+
+    # Cardiology (map to actual taxonomy language)
+    "cardiology": "cardiovascular disease",
+    "cardiologist": "cardiovascular disease",
+    "cardiologists": "cardiovascular disease",
+    "heart doctor": "cardiovascular disease",
+    "heart doctors": "cardiovascular disease",
+    "heart specialist": "cardiovascular disease",
+    "heart failure specialist": "cardiovascular disease",
+
+    # Primary Care / Internal Medicine
+    "primary care": "internal medicine",
+    "primary care doctor": "internal medicine",
+    "internist": "internal medicine",
+    "internal medicine": "internal medicine",
+
+    # Pediatrics
+    "pediatrician": "pediatrics",
+    "pediatricians": "pediatrics",
+    "children doctor": "pediatrics",
+    "kids doctor": "pediatrics",
+    "pediatrics": "pediatrics",
+
+    # Dermatology
+    "skin doctor": "dermatology",
+    "skin specialist": "dermatology",
+    "dermatologist": "dermatology",
+    "dermatologists": "dermatology",
+    "dermatology": "dermatology",
+
+    # Neurology
+    "brain doctor": "neurology",
+    "neurologist": "neurology",
+    "neurologists": "neurology",
+    "neurology": "neurology",
+
+    # Orthopedics
+    "bone doctor": "orthopaedic surgery",
+    "orthopedic": "orthopaedic surgery",
+    "orthopedic surgeon": "orthopaedic surgery",
+    "orthopedics": "orthopaedic surgery",
+
+    # Nephrology
+    "kidney doctor": "nephrology",
+    "kidney specialist": "nephrology",
+    "nephrologist": "nephrology",
+    "nephrology": "nephrology",
+
+    # Pulmonary
+    "lung doctor": "pulmonary disease",
+    "pulmonologist": "pulmonary disease",
+    "pulmonary": "pulmonary disease",
+
+    # Endocrinology
+    "diabetes doctor": "endocrinology",
+    "hormone specialist": "endocrinology",
+    "endocrinologist": "endocrinology",
+    "endocrinology": "endocrinology",
+
+    # Psychiatry / Mental Health
+    "psychiatrist": "psychiatry",
+    "mental health doctor": "psychiatry",
+    "psych doctor": "psychiatry",
+
+    # Psychology
+    "psychologist": "psychologist",
+    "therapist": "psychologist",
+
+    # OBGYN
+    "obgyn": "obstetrics & gynecology",
+    "gynecologist": "obstetrics & gynecology",
+    "women's doctor": "obstetrics & gynecology",
+
+    # Dentistry
+    "dentist": "dentist",
+    "teeth doctor": "dentist",
+
+    # NP / APP
+    "nurse practitioner": "nurse practitioner",
+    "np": "nurse practitioner",
+    "physician assistant": "physician assistant",
+    "pa": "physician assistant"
+}
+    mapped = aliases.get(s, s)
+
+# fallback: if alias not found, use original text
+return mapped
+
+def normalize_state(state):
+    if not state:
+        return state
+
+    state = state.strip().lower()
+
+    state_map = {
+        "new jersey": "NJ",
+        "new york": "NY",
+        "maryland": "MD",
+        "california": "CA",
+        "texas": "TX",
+        "pennsylvania": "PA",
+        "virginia": "VA",
+        "district of columbia": "DC",
+        "washington dc": "DC",
+        "dc": "DC"
     }
 
-    return aliases.get(s, s)
+    if len(state) == 2:
+        return normalize_state(state)
 
+    return state_map.get(state, normalize_state(state))
 
 def find_provider_by_npi(npi):
     sql = """
@@ -235,7 +343,7 @@ def search_providers(
 
     if state:
         sql += ' AND "Provider Business Practice Location Address State Name" = ?'
-        params.append(state.upper())
+        params.append(normalize_state(state))
 
     if city:
         sql += ' AND "Provider Business Practice Location Address City Name" LIKE ?'
@@ -306,7 +414,7 @@ def count_providers_by_city(state=None, specialty=None, limit=20):
 
     if state:
         sql += ' AND "Provider Business Practice Location Address State Name" = ?'
-        params.append(state.upper())
+        params.append(normalize_state(state))
 
     if specialty:
         taxonomy_matches = search_taxonomy_codes(specialty, limit=200)
@@ -358,7 +466,7 @@ def count_providers_by_taxonomy(state=None, city=None, limit=20):
 
     if state:
         sql += ' AND p."Provider Business Practice Location Address State Name" = ?'
-        params.append(state.upper())
+        params.append(normalize_state(state))
 
     if city:
         sql += ' AND p."Provider Business Practice Location Address City Name" LIKE ?'
@@ -430,7 +538,7 @@ def provider_type_breakdown(state=None, city=None):
 
     if state:
         sql += ' AND "Provider Business Practice Location Address State Name" = ?'
-        params.append(state.upper())
+        params.append(normalize_state(state))
 
     if city:
         sql += ' AND "Provider Business Practice Location Address City Name" LIKE ?'
@@ -757,9 +865,6 @@ def execute_tool(tool_name, tool_input):
         )
         return df_to_json_records(result, max_rows=5)
 
-    return {
-        "error": f"Unknown tool: {tool_name}"
-    }
 
     if tool_name == "count_providers_by_city":
         result = count_providers_by_city(
@@ -791,7 +896,10 @@ def execute_tool(tool_name, tool_input):
             city=tool_input.get("city")
         )
         return df_to_json_records(result, max_rows=10)
-
+        
+      return {
+            "error": f"Unknown tool: {tool_name}"
+        }
 
 def bedrock_agent(question):
     messages = [
