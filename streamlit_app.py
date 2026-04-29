@@ -1,6 +1,6 @@
 import streamlit as st
 import folium
-from streamlit_folium import st_folium
+from streamlit.components.v1 import html
 from geopy.geocoders import Nominatim, ArcGIS
 from geopy.distance import geodesic
 from datetime import datetime
@@ -49,7 +49,6 @@ def clean_address_for_geocoding(address):
         return ""
 
     address = str(address).strip()
-
     parts = address.split()
     cleaned_parts = []
 
@@ -228,8 +227,8 @@ if "chat_history" not in st.session_state:
 if "show_map" not in st.session_state:
     st.session_state.show_map = False
 
-if "map_object" not in st.session_state:
-    st.session_state.map_object = None
+if "map_object_html" not in st.session_state:
+    st.session_state.map_object_html = None
 
 if "mapped_results" not in st.session_state:
     st.session_state.mapped_results = []
@@ -249,7 +248,7 @@ with col2:
 if clear_button:
     st.session_state.chat_history = []
     st.session_state.show_map = False
-    st.session_state.map_object = None
+    st.session_state.map_object_html = None
     st.session_state.mapped_results = []
     st.rerun()
 
@@ -308,7 +307,7 @@ with map_col2:
 
 if clear_map_button:
     st.session_state.show_map = False
-    st.session_state.map_object = None
+    st.session_state.map_object_html = None
     st.session_state.mapped_results = []
     st.rerun()
 
@@ -341,7 +340,7 @@ if show_map_button:
                 )
             else:
                 st.session_state.show_map = True
-                st.session_state.map_object = map_object
+                st.session_state.map_object_html = map_object._repr_html_()
                 st.session_state.mapped_results = mapped_results
 
 
@@ -350,4 +349,8 @@ if st.session_state.show_map:
     st.dataframe(st.session_state.mapped_results, use_container_width=True)
 
     st.markdown("### Interactive Map")
-    st_folium(st.session_state.map_object, width=1000, height=550)
+    html(
+        st.session_state.map_object_html,
+        height=600,
+        scrolling=False
+    )
