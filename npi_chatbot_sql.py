@@ -583,37 +583,87 @@ def format_tool_result(tool_name, tool_result):
     lines = [f"Found {len(rows)} matching record(s):"]
 
     for row in rows:
+
         if tool_name == "search_providers":
             first = row.get("Provider First Name")
             last = row.get("Provider Last Name (Legal Name)")
             org = row.get("Provider Organization Name (Legal Business Name)")
-        
+
             first = "" if first is None else str(first)
             last = "" if last is None else str(last)
             org = "" if org is None else str(org)
-        
-            name_parts = [first, last]
-            name = " ".join([x for x in name_parts if x.strip()])
-        
+
+            name = " ".join([x for x in [first, last] if x.strip()])
+
             city = row.get("City")
             state = row.get("State")
             npi = row.get("NPI")
             tax = row.get("Taxonomy_1")
+
             entity = row.get("Entity_Type_Code")
-        
+
             if str(entity) in ["1", "1.0"]:
                 entity_label = "Individual"
             elif str(entity) in ["2", "2.0"]:
                 entity_label = "Organization"
             else:
                 entity_label = "Unknown"
-        
+
             display_name = name if name else org if org else "Unknown provider"
-        
+
             lines.append(
                 f"- {display_name} | {entity_label} | NPI: {npi} | {city}, {state} | Taxonomy: {tax}"
             )
 
+        elif tool_name == "search_taxonomy_codes":
+            lines.append(
+                f"- {row.get('Code')} | {row.get('Classification')} | "
+                f"{row.get('Specialization')} | {row.get('Display Name')}"
+            )
+
+        elif tool_name == "count_providers_by_state":
+            lines.append(
+                f"- {row.get('State')}: {row.get('Provider_Count')}"
+            )
+
+        elif tool_name == "find_provider_by_npi":
+            lines.append(str(row))
+
+        elif tool_name == "count_providers_by_city":
+            lines.append(
+                f"- {row.get('City')}, {row.get('State')}: {row.get('Provider_Count')}"
+            )
+
+        elif tool_name == "count_providers_by_taxonomy":
+            lines.append(
+                f"- {row.get('Taxonomy_Code')} | {row.get('Taxonomy_Display_Name')} | "
+                f"{row.get('Classification')} | {row.get('Specialization')} | "
+                f"Count: {row.get('Provider_Count')}"
+            )
+
+        elif tool_name == "compare_specialty_between_states":
+            lines.append(
+                f"- {row.get('State')}: {row.get('Provider_Count')}"
+            )
+
+        elif tool_name == "provider_type_breakdown":
+            entity = row.get("Entity_Type_Code")
+
+            if str(entity) in ["1", "1.0"]:
+                label = "Individual Provider"
+            elif str(entity) in ["2", "2.0"]:
+                label = "Organization Provider"
+            else:
+                label = "Unknown Provider"
+
+            lines.append(
+                f"- {label}: {row.get('Provider_Count')}"
+            )
+
+        else:
+            lines.append(str(row))
+
+    return "\n".join(lines)
 
 tool_config = {
     "tools": [
