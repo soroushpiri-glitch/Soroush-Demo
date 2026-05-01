@@ -254,27 +254,27 @@ if "voice_pending_text" not in st.session_state:
 
 
 # -----------------------------
-# Text query + mic under box
+# Text query + mic
 # -----------------------------
 st.subheader("Text Query")
 
-question = st.text_input(
-    "Ask a question about NPI provider data:",
-    value=st.session_state.voice_pending_text,
-    key="question_input"
-)
+st.markdown("🎙️ Click the mic, speak, then stop recording. The text will appear below.")
 
 voice_text = speech_to_text(
-    language="en",
+    language="en-US",
     start_prompt="🎙️",
     stop_prompt="⏹️",
-    just_once=False,
+    just_once=True,
     key="voice_input"
 )
 
 if voice_text:
     st.session_state.voice_pending_text = voice_text
-    st.rerun()
+
+question = st.text_input(
+    "Ask a question about NPI provider data:",
+    value=st.session_state.voice_pending_text
+)
 
 col1, col2 = st.columns(2)
 
