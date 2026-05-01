@@ -255,36 +255,27 @@ if "confirmed_query" not in st.session_state:
 
 
 # -----------------------------
-# Voice input
-# -----------------------------
-st.subheader("Voice Input")
-
-voice_text = speech_to_text(
-    language="en",
-    start_prompt="Start Recording",
-    stop_prompt="Stop Recording",
-    just_once=True,
-    key="voice_input"
-)
-
-if voice_text:
-    st.success("Voice converted to text:")
-    st.write(voice_text)
-
-    if st.button("Use this voice text as query"):
-        st.session_state.confirmed_query = voice_text
-        st.rerun()
-
-
-# -----------------------------
-# Query input
+# Text query + mic under box
 # -----------------------------
 st.subheader("Text Query")
 
 question = st.text_input(
     "Ask a question about NPI provider data:",
-    value=st.session_state.confirmed_query
+    value=st.session_state.confirmed_query,
+    key="question_input"
 )
+
+voice_text = speech_to_text(
+    language="en",
+    start_prompt="🎙️",
+    stop_prompt="⏹️",
+    just_once=True,
+    key="voice_input"
+)
+
+if voice_text:
+    st.session_state.confirmed_query = voice_text
+    st.rerun()
 
 col1, col2 = st.columns(2)
 
