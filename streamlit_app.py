@@ -30,7 +30,7 @@ with st.sidebar:
     st.code("Search for providers with last name Smith in MD")
 
     st.markdown("### 🆔 NPI Lookup")
-    st.code("Find provider by NPI 1234567890")
+    st.code("Find provider by NPI 1962405985")
 
     st.markdown("### 📊 Counts & Rankings")
     st.code("Count providers by state")
