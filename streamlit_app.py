@@ -47,7 +47,6 @@ def local_timestamp():
 
 
 def get_next_step_message(question, answer):
-    q = question.lower()
     a = answer.lower()
 
     if "no matching records" in a:
@@ -75,7 +74,7 @@ def get_next_step_message(question, answer):
     )
 
 
-def speak_text(text):
+def speak_text(text, autoplay=True):
     try:
         tts = gTTS(text=text, lang="en")
 
@@ -85,7 +84,11 @@ def speak_text(text):
             with open(fp.name, "rb") as audio_file:
                 audio_bytes = audio_file.read()
 
-        st.audio(audio_bytes, format="audio/mp3")
+        st.audio(
+            audio_bytes,
+            format="audio/mp3",
+            autoplay=autoplay
+        )
 
     except Exception:
         st.warning("Voice output could not be generated, but the text guidance is shown below.")
@@ -299,9 +302,6 @@ if "mapped_results" not in st.session_state:
 if "voice_pending_text" not in st.session_state:
     st.session_state.voice_pending_text = ""
 
-if "latest_next_step" not in st.session_state:
-    st.session_state.latest_next_step = ""
-
 
 # -----------------------------
 # Text query + mic
@@ -341,7 +341,6 @@ if clear_button:
     st.session_state.map_object_html = None
     st.session_state.mapped_results = []
     st.session_state.voice_pending_text = ""
-    st.session_state.latest_next_step = ""
     st.rerun()
 
 
@@ -364,20 +363,8 @@ if ask_button and question.strip():
         "next_step": next_step
     })
 
-    st.session_state.latest_next_step = next_step
     st.session_state.voice_pending_text = ""
     st.rerun()
-
-
-# -----------------------------
-# Latest AI guide voice output
-# -----------------------------
-if st.session_state.latest_next_step:
-    st.markdown("### Assistant Guidance")
-    st.info(st.session_state.latest_next_step)
-
-    with st.expander("🔊 Play voice guidance", expanded=False):
-        speak_text(st.session_state.latest_next_step)
 
 
 # -----------------------------
@@ -403,6 +390,12 @@ else:
             if item.get("next_step"):
                 st.markdown("### 💡 What you can do next")
                 st.info(item["next_step"])
+
+                if i == 0:
+                    speak_text(item["next_step"], autoplay=True)
+                else:
+                    with st.expander("🔊 Play previous voice guidance", expanded=False):
+                        speak_text(item["next_step"], autoplay=False)
 
 
 # -----------------------------
