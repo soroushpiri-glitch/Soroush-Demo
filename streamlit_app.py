@@ -6,6 +6,7 @@ from geopy.geocoders import Nominatim, ArcGIS
 from geopy.distance import geodesic
 from datetime import datetime
 from zoneinfo import ZoneInfo
+from urllib.parse import quote_plus
 from npi_chatbot_sql import bedrock_agent
 from gtts import gTTS
 import tempfile
@@ -218,11 +219,13 @@ def build_provider_map(user_address, providers):
     if user_lat is None:
         return None, []
 
+    user_address_clean = clean_address_for_geocoding(user_address)
+
     m = folium.Map(location=[user_lat, user_lon], zoom_start=10)
 
     folium.Marker(
         [user_lat, user_lon],
-        popup="Your location",
+        popup=f"Your location<br>{user_address_clean}",
         tooltip="Your location",
         icon=folium.Icon(color="blue", icon="home")
     ).add_to(m)
@@ -252,10 +255,17 @@ def build_provider_map(user_address, providers):
             "Distance (miles)": round(distance, 2)
         })
 
+        # IMPORTANT FIX:
+        # Use the exact typed user address as Google Maps origin.
+        # Do not use user_lat,user_lon, because Google can reverse-geocode it
+        # into a nearby but different street address.
+        origin_address = quote_plus(user_address_clean)
+        destination_address = quote_plus(cleaned_provider_address)
+
         directions_url = (
             "https://www.google.com/maps/dir/?api=1"
-            f"&origin={user_lat},{user_lon}"
-            f"&destination={lat},{lon}"
+            f"&origin={origin_address}"
+            f"&destination={destination_address}"
             "&travelmode=driving"
         )
 
