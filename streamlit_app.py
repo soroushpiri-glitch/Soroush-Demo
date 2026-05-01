@@ -1,6 +1,7 @@
 import streamlit as st
 import folium
 from streamlit.components.v1 import html
+from streamlit_mic_recorder import speech_to_text
 from geopy.geocoders import Nominatim, ArcGIS
 from geopy.distance import geodesic
 from datetime import datetime
@@ -234,6 +235,9 @@ def build_provider_map(user_address, providers):
     return m, results
 
 
+# -----------------------------
+# Session state
+# -----------------------------
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
@@ -246,8 +250,41 @@ if "map_object_html" not in st.session_state:
 if "mapped_results" not in st.session_state:
     st.session_state.mapped_results = []
 
+if "confirmed_query" not in st.session_state:
+    st.session_state.confirmed_query = ""
 
-question = st.text_input("Ask a question about NPI provider data:")
+
+# -----------------------------
+# Voice input
+# -----------------------------
+st.subheader("Voice Input")
+
+voice_text = speech_to_text(
+    language="en",
+    start_prompt="Start Recording",
+    stop_prompt="Stop Recording",
+    just_once=True,
+    key="voice_input"
+)
+
+if voice_text:
+    st.success("Voice converted to text:")
+    st.write(voice_text)
+
+    if st.button("Use this voice text as query"):
+        st.session_state.confirmed_query = voice_text
+        st.rerun()
+
+
+# -----------------------------
+# Query input
+# -----------------------------
+st.subheader("Text Query")
+
+question = st.text_input(
+    "Ask a question about NPI provider data:",
+    value=st.session_state.confirmed_query
+)
 
 col1, col2 = st.columns(2)
 
@@ -263,6 +300,7 @@ if clear_button:
     st.session_state.show_map = False
     st.session_state.map_object_html = None
     st.session_state.mapped_results = []
+    st.session_state.confirmed_query = ""
     st.rerun()
 
 
@@ -283,7 +321,13 @@ if ask_button and question.strip():
         "answer": answer
     })
 
+    st.session_state.confirmed_query = ""
+    st.rerun()
 
+
+# -----------------------------
+# Conversation history
+# -----------------------------
 st.subheader("Conversation History")
 
 if not st.session_state.chat_history:
@@ -302,6 +346,9 @@ else:
             st.write(item["answer"])
 
 
+# -----------------------------
+# Provider map
+# -----------------------------
 st.subheader("Provider Map")
 
 user_address = st.text_input(
@@ -355,6 +402,7 @@ if show_map_button:
                 st.session_state.show_map = True
                 st.session_state.map_object_html = map_object._repr_html_()
                 st.session_state.mapped_results = mapped_results
+                st.rerun()
 
 
 if st.session_state.show_map:
