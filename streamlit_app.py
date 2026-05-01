@@ -16,7 +16,11 @@ st.title("NPI Healthcare Provider AI Agent")
 
 def make_subject(question, max_len=55):
     subject = question.strip()
-    prefixes = ["find", "show", "what is", "what are", "can you", "please", "search for", "give me", "tell me"]
+    prefixes = [
+        "find", "show", "what is", "what are", "can you",
+        "please", "search for", "give me", "tell me"
+    ]
+
     lower_subject = subject.lower()
 
     for prefix in prefixes:
@@ -50,6 +54,7 @@ def clean_address_for_geocoding(address):
 
     for part in parts:
         clean_part = part.strip().replace(",", "")
+
         if clean_part.isdigit() and len(clean_part) > 5:
             cleaned_parts.append(clean_part[:5])
         else:
@@ -99,8 +104,10 @@ def geocode_address(address):
     try:
         arcgis = ArcGIS(timeout=10)
         location = arcgis.geocode(cleaned_address)
+
         if location:
             return location.latitude, location.longitude
+
     except Exception:
         pass
 
@@ -109,13 +116,16 @@ def geocode_address(address):
             user_agent="npi_healthcare_agent_soroush",
             timeout=15
         )
+
         location = nominatim.geocode(
             cleaned_address,
             exactly_one=True,
             country_codes="us"
         )
+
         if location:
             return location.latitude, location.longitude
+
     except Exception:
         pass
 
@@ -124,7 +134,11 @@ def geocode_address(address):
 
 def parse_provider_lines(answer):
     providers = []
-    lines = [line for line in answer.split("\n") if line.strip().startswith("-")]
+
+    lines = [
+        line for line in answer.split("\n")
+        if line.strip().startswith("-")
+    ]
 
     for line in lines:
         try:
@@ -141,6 +155,7 @@ def parse_provider_lines(answer):
                 "address": parts[3].strip(),
                 "taxonomy": parts[4].replace("Taxonomy:", "").strip()
             })
+
         except Exception:
             continue
 
@@ -215,6 +230,7 @@ def build_provider_map(user_address, providers):
         ).add_to(m)
 
     results = sorted(results, key=lambda x: x["Distance (miles)"])
+
     return m, results
 
 
@@ -233,8 +249,8 @@ if "map_object_html" not in st.session_state:
 if "mapped_results" not in st.session_state:
     st.session_state.mapped_results = []
 
-if "question_input" not in st.session_state:
-    st.session_state.question_input = ""
+if "voice_pending_text" not in st.session_state:
+    st.session_state.voice_pending_text = ""
 
 
 # -----------------------------
@@ -244,6 +260,7 @@ st.subheader("Text Query")
 
 question = st.text_input(
     "Ask a question about NPI provider data:",
+    value=st.session_state.voice_pending_text,
     key="question_input"
 )
 
@@ -256,7 +273,7 @@ voice_text = speech_to_text(
 )
 
 if voice_text:
-    st.session_state.question_input = voice_text
+    st.session_state.voice_pending_text = voice_text
     st.rerun()
 
 col1, col2 = st.columns(2)
@@ -273,7 +290,7 @@ if clear_button:
     st.session_state.show_map = False
     st.session_state.map_object_html = None
     st.session_state.mapped_results = []
-    st.session_state.question_input = ""
+    st.session_state.voice_pending_text = ""
     st.rerun()
 
 
@@ -294,7 +311,7 @@ if ask_button and question.strip():
         "answer": answer
     })
 
-    st.session_state.question_input = ""
+    st.session_state.voice_pending_text = ""
     st.rerun()
 
 
