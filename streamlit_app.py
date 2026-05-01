@@ -7,6 +7,8 @@ from geopy.distance import geodesic
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from npi_chatbot_sql import bedrock_agent
+from gtts import gTTS
+import tempfile
 
 
 st.set_page_config(page_title="NPI Healthcare AI Agent", layout="wide")
@@ -42,6 +44,51 @@ def local_timestamp():
         "short": now.strftime("%I:%M %p ET"),
         "full": now.strftime("%Y-%m-%d %I:%M:%S %p ET")
     }
+
+
+def get_next_step_message(question, answer):
+    q = question.lower()
+    a = answer.lower()
+
+    if "no matching records" in a:
+        return (
+            "I could not find matching records. You can try a broader specialty, "
+            "a different city or state, or search by provider name."
+        )
+
+    if "npi" in a or "provider" in a:
+        return (
+            "What would you like to do next? You can show these providers on the map, "
+            "filter by city or state, show only organizations or individuals, "
+            "or compare with another state."
+        )
+
+    if "count" in a or "city" in a or "state" in a:
+        return (
+            "You can explore this further by comparing another state, mapping providers "
+            "in a specific city, or filtering by specialty."
+        )
+
+    return (
+        "What would you like to do next? You can ask a follow-up question, "
+        "show results on the map, or compare locations."
+    )
+
+
+def speak_text(text):
+    try:
+        tts = gTTS(text=text, lang="en")
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as fp:
+            tts.save(fp.name)
+
+            with open(fp.name, "rb") as audio_file:
+                audio_bytes = audio_file.read()
+
+        st.audio(audio_bytes, format="audio/mp3")
+
+    except Exception:
+        st.warning("Voice output could not be generated, but the text guidance is shown below.")
 
 
 def clean_address_for_geocoding(address):
@@ -252,6 +299,9 @@ if "mapped_results" not in st.session_state:
 if "voice_pending_text" not in st.session_state:
     st.session_state.voice_pending_text = ""
 
+if "latest_next_step" not in st.session_state:
+    st.session_state.latest_next_step = ""
+
 
 # -----------------------------
 # Text query + mic
@@ -291,6 +341,7 @@ if clear_button:
     st.session_state.map_object_html = None
     st.session_state.mapped_results = []
     st.session_state.voice_pending_text = ""
+    st.session_state.latest_next_step = ""
     st.rerun()
 
 
@@ -302,17 +353,31 @@ if ask_button and question.strip():
         )
 
     ts = local_timestamp()
+    next_step = get_next_step_message(question, answer)
 
     st.session_state.chat_history.append({
         "time": ts["short"],
         "full_time": ts["full"],
         "subject": make_subject(question),
         "question": question,
-        "answer": answer
+        "answer": answer,
+        "next_step": next_step
     })
 
+    st.session_state.latest_next_step = next_step
     st.session_state.voice_pending_text = ""
     st.rerun()
+
+
+# -----------------------------
+# Latest AI guide voice output
+# -----------------------------
+if st.session_state.latest_next_step:
+    st.markdown("### Assistant Guidance")
+    st.info(st.session_state.latest_next_step)
+
+    with st.expander("🔊 Play voice guidance", expanded=False):
+        speak_text(st.session_state.latest_next_step)
 
 
 # -----------------------------
@@ -334,6 +399,10 @@ else:
 
             st.markdown("**Answer:**")
             st.write(item["answer"])
+
+            if item.get("next_step"):
+                st.markdown("### 💡 What you can do next")
+                st.info(item["next_step"])
 
 
 # -----------------------------
