@@ -17,6 +17,43 @@ st.set_page_config(page_title="NPI Healthcare AI Agent", layout="wide")
 st.title("NPI Healthcare Provider AI Agent")
 
 
+# -----------------------------
+# Sidebar: example questions
+# -----------------------------
+with st.sidebar:
+    st.header("💡 Example Questions")
+
+    st.markdown("### 🔎 Provider Search")
+    st.code("Find oncologists in Maryland")
+    st.code("Show cardiologists in Baltimore")
+    st.code("Find nurse practitioners in New York")
+    st.code("Search for providers with last name Smith in MD")
+
+    st.markdown("### 🆔 NPI Lookup")
+    st.code("Find provider by NPI 1234567890")
+
+    st.markdown("### 📊 Counts & Rankings")
+    st.code("Count providers by state")
+    st.code("Top cities for oncology in Maryland")
+    st.code("What are the most common specialties in Baltimore?")
+
+    st.markdown("### ⚖️ Comparisons")
+    st.code("Compare oncologists between MD, VA, and DC")
+    st.code("Compare cardiologists in Maryland and Pennsylvania")
+
+    st.markdown("### 🏥 Provider Type")
+    st.code("Show individual providers in Baltimore")
+    st.code("Show organizations in Maryland")
+    st.code("Break down providers by individual vs organization")
+
+    st.markdown("### 🗺️ Map Workflow")
+    st.info(
+        "1. Ask a provider search question\n"
+        "2. Enter your address\n"
+        "3. Click **Show Map for Latest Provider Results**"
+    )
+
+
 def make_subject(question, max_len=55):
     subject = question.strip()
     prefixes = [
@@ -255,10 +292,6 @@ def build_provider_map(user_address, providers):
             "Distance (miles)": round(distance, 2)
         })
 
-        # IMPORTANT FIX:
-        # Use the exact typed user address as Google Maps origin.
-        # Do not use user_lat,user_lon, because Google can reverse-geocode it
-        # into a nearby but different street address.
         origin_address = quote_plus(user_address_clean)
         destination_address = quote_plus(cleaned_provider_address)
 
