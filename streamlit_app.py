@@ -16,7 +16,6 @@ st.title("NPI Healthcare Provider AI Agent")
 
 def make_subject(question, max_len=55):
     subject = question.strip()
-
     prefixes = [
         "find", "show", "what is", "what are", "can you",
         "please", "search for", "give me", "tell me"
@@ -250,40 +249,31 @@ if "map_object_html" not in st.session_state:
 if "mapped_results" not in st.session_state:
     st.session_state.mapped_results = []
 
-if "confirmed_query" not in st.session_state:
-    st.session_state.confirmed_query = ""
+if "voice_pending_text" not in st.session_state:
+    st.session_state.voice_pending_text = ""
 
 
 # -----------------------------
-# Voice input
+# Text query + mic
 # -----------------------------
-st.subheader("Voice Input")
+st.subheader("Text Query")
+
+st.markdown("🎙️ Click the mic, speak, then stop recording. The text will appear below.")
 
 voice_text = speech_to_text(
-    language="en",
-    start_prompt="Start Recording",
-    stop_prompt="Stop Recording",
+    language="en-US",
+    start_prompt="🎙️",
+    stop_prompt="⏹️",
     just_once=True,
     key="voice_input"
 )
 
 if voice_text:
-    st.success("Voice converted to text:")
-    st.write(voice_text)
-
-    if st.button("Use this voice text as query"):
-        st.session_state.confirmed_query = voice_text
-        st.rerun()
-
-
-# -----------------------------
-# Query input
-# -----------------------------
-st.subheader("Text Query")
+    st.session_state.voice_pending_text = voice_text
 
 question = st.text_input(
     "Ask a question about NPI provider data:",
-    value=st.session_state.confirmed_query
+    value=st.session_state.voice_pending_text
 )
 
 col1, col2 = st.columns(2)
@@ -300,7 +290,7 @@ if clear_button:
     st.session_state.show_map = False
     st.session_state.map_object_html = None
     st.session_state.mapped_results = []
-    st.session_state.confirmed_query = ""
+    st.session_state.voice_pending_text = ""
     st.rerun()
 
 
@@ -321,7 +311,7 @@ if ask_button and question.strip():
         "answer": answer
     })
 
-    st.session_state.confirmed_query = ""
+    st.session_state.voice_pending_text = ""
     st.rerun()
 
 
